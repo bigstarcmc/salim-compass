@@ -113,10 +113,12 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .b-주{background:var(--day); color:#4A3200;} .b-야{background:var(--night);} .b-휴{background:transparent; color:var(--danger); font-size:10px;}
 .b-휴가{background:#3BA36A;} .b-대근주간{background:#C026D3;} .b-대근야간{background:#581C87;}
 .b-교육{background:#2F6FED;} .b-건강검진{background:#0E93A8;} .b-개인일정{background:#6B7280;}
-.dotImp{position:absolute; top:3px; right:4px; font-size:8px;}
+.dotImp{position:absolute; top:3px; right:4px; font-size:8px; animation:blinkDot 1.1s infinite;}
+@keyframes blinkDot{0%,100%{opacity:1;} 50%{opacity:.25;}}
 
-.myTeamChip{display:inline-flex; align-items:center; gap:8px; background:var(--gold-soft); color:var(--gold-deep);
-  padding:8px 14px; border-radius:20px; font-weight:700; font-size:13px; margin-bottom:12px;}
+.myTeamChip{display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--gold-soft); color:var(--gold-deep);
+  padding:10px 14px; border-radius:14px; font-weight:700; font-size:12px; margin-bottom:12px;}
+.myTeamChip b{color:var(--ink);}
 
 /* ---------- Bottom sheet modal ---------- */
 .sheetOverlay{position:fixed; inset:0; background:rgba(27,42,74,.5); z-index:50; display:none;}
@@ -389,7 +391,6 @@ const WD = ['일', '월', '화', '수', '목', '금', '토'];
 function loadCalendar() {
   const el = document.getElementById('view-calendar');
   el.innerHTML =
-    '<div id="payrollTicker" class="myTeamChip" style="background:var(--gold-soft);"></div>' +
     '<div id="myTeamBox"></div>' +
     '<div class="card"><div class="calHead"><button onclick="calShift(-1)">◀</button><span class="ym" id="calYm"></span><button onclick="calShift(1)">▶</button></div>' +
     '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);margin-bottom:10px;"><input type="checkbox" id="calAllTeams" onchange="fetchCalendar()"> 4개조 전체 보기</label>' +
@@ -405,16 +406,38 @@ async function fetchCalendar() {
   const allTeams = document.getElementById('calAllTeams').checked;
   document.getElementById('calSingleView').style.display = allTeams ? 'none' : '';
   document.getElementById('calAllTeamsView').style.display = allTeams ? '' : 'none';
-  // 근무배경/내조/실시간월급은 항상 진한 기준으로 통일(가족 일정이 그의 교대에 맞춰지므로).
-  // 일정(이벤트)만 상단 스코프(공동/진한/선영)에 따라 걸러서 보여줌.
+  // 근무배경/내조는 항상 진한 기준으로 통일(가족 일정이 그의 교대에 맞춰지므로).
+  // 일정(휴가/대근 등)은 스코프와 무관하게 늘 가족 전체가 같이 봄 — 굳이 나눌 이유가 없어서.
   const res = await api('getCalendarView', [primaryOwnerId(), calYm(), allTeams]);
   if (!res.success) { document.getElementById('calGrid').innerText = '오류: ' + res.message; return; }
   const d = res.data;
-  const events = SCOPE === 'shared' ? d.events : d.events.filter(e => e.OwnerID === SCOPE);
-  document.getElementById('myTeamBox').innerHTML = '<div class="myTeamChip">🧭 내 조: ' + (d.currentTeam || '미설정') + '</div>';
-  document.getElementById('payrollTicker').innerHTML = (d.payrollEstimate !== null && d.payrollEstimate !== undefined)
-    ? '💰 진한 이번 달 실시간 예상 월급 &nbsp;<b>' + fmtWon(d.payrollEstimate) + '</b>' : '';
-  if (allTeams) renderAllTeamsView(d.shifts); else renderCalGrid(d.shifts, events);
+  document.getElementById('myTeamBox').innerHTML =
+    '<div class="myTeamChip"><span>🧭 내 조: ' + (d.currentTeam || '미설정') + '</span><span id="payrollTickerInline">불러오는 중...</span></div>';
+  if (allTeams) renderAllTeamsView(d.shifts); else renderCalGrid(d.shifts, d.events);
+  fetchPayrollTicker(d.payrollEstimate);
+}
+
+// 실시간 예상월급 — 스코프에 맞게: 진한/선영 선택 시 그 사람 것만, 공동이면 둘을 합산.
+async function fetchPayrollTicker(primaryPayrollEstimate) {
+  const el = document.getElementById('payrollTickerInline');
+  if (!el) return;
+  const primaryId = primaryOwnerId();
+  if (SCOPE !== 'shared' && SCOPE !== primaryId) {
+    const res = await api('getPayrollEstimate', [SCOPE, todayYm()]);
+    const amt = res.success ? res.data.estimated : null;
+    el.innerHTML = amt !== null ? '💰 ' + profileName(SCOPE) + ' 예상 월급 <b>' + fmtWon(amt) + '</b>' : '';
+    return;
+  }
+  if (SCOPE === 'shared') {
+    const others = PROFILES.filter(p => p.ProfileID !== primaryId);
+    const otherTotals = await Promise.all(others.map(p => api('getPayrollEstimate', [p.ProfileID, todayYm()])));
+    const otherSum = otherTotals.reduce((s, r) => s + (r.success ? r.data.estimated : 0), 0);
+    const total = (primaryPayrollEstimate || 0) + otherSum;
+    el.innerHTML = '💰 공동 예상 월급 <b>' + fmtWon(total) + '</b>';
+    return;
+  }
+  el.innerHTML = primaryPayrollEstimate !== null && primaryPayrollEstimate !== undefined
+    ? '💰 ' + profileName(primaryId) + ' 예상 월급 <b>' + fmtWon(primaryPayrollEstimate) + '</b>' : '';
 }
 function renderAllTeamsView(shiftsByTeam) {
   const teams = ['A', 'B', 'C', 'D'];
@@ -424,10 +447,14 @@ function renderAllTeamsView(shiftsByTeam) {
   const weeks = [];
   for (let i = 0; i < cells.length; i += 7) { const w = cells.slice(i, i + 7); while (w.length < 7) w.push(null); weeks.push(w); }
   const today = todayStr();
-  let html = '';
+  let html = '<div style="display:grid;grid-template-columns:28px repeat(7,1fr);gap:2px;margin-bottom:6px;">' +
+    '<div></div>' + WD.map(w => '<div style="text-align:center;font-size:10px;font-weight:700;color:var(--ink-mute);">' + w + '</div>').join('') + '</div>';
   weeks.forEach(week => {
     html += '<div style="display:grid;grid-template-columns:28px repeat(7,1fr);gap:2px;margin-bottom:2px;">';
-    html += '<div></div>' + week.map(d => '<div style="text-align:center;font-size:9px;color:var(--ink-mute);">' + (d ? Number(d.split('-')[2]) : '') + '</div>').join('');
+    html += '<div></div>' + week.map(d => {
+      const isToday = d === today;
+      return '<div style="text-align:center;font-size:' + (isToday ? '11px' : '9px') + ';font-weight:' + (isToday ? '900' : '400') + ';color:' + (isToday ? 'var(--gold-deep)' : 'var(--ink-mute)') + ';">' + (d ? Number(d.split('-')[2]) : '') + '</div>';
+    }).join('');
     html += '</div>';
     teams.forEach(t => {
       html += '<div style="display:grid;grid-template-columns:28px repeat(7,1fr);gap:2px;margin-bottom:3px;">';
@@ -435,7 +462,11 @@ function renderAllTeamsView(shiftsByTeam) {
       html += week.map(d => {
         if (!d) return '<div></div>';
         const type = shiftsByTeam[t][d];
-        return '<div style="height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;" class="b-' + type + (d === today ? ' today' : '') + '">' + type + '</div>';
+        const isToday = d === today;
+        const style = isToday
+          ? 'height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;box-shadow:0 0 0 2px var(--gold);'
+          : 'height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;';
+        return '<div style="' + style + '" class="b-' + type + '">' + type + '</div>';
       }).join('');
       html += '</div>';
     });
@@ -478,13 +509,21 @@ async function openDaySheet(dateStr) {
   openSheet(dateStr, '<div class="muted">불러오는 중...</div>');
   await refreshDaySheet();
 }
+let DAY_EVENTS_CACHE = [];
+let DAY_JOURNAL_CACHE = [];
 async function refreshDaySheet() {
   const res = await api('getDateDetail', [calSelectedDate]);
   if (!res.success) return;
+  DAY_EVENTS_CACHE = res.data.events;
+  DAY_JOURNAL_CACHE = res.data.journal;
   let html = '<div class="cardTitle" style="margin-top:6px;">일정</div>';
-  html += res.data.events.map(e => '<div class="rowLine"><span>' + e.Type + (e.Memo ? ' - ' + e.Memo : '') + '</span></div>').join('') || '<div class="emptyState">일정 없음</div>';
+  html += DAY_EVENTS_CACHE.map(e => '<div class="itemRow"><span>' + e.Type + (e.Memo ? ' - ' + e.Memo : '') + (String(e.IsImportant) === 'true' ? ' 🔴' : '') + '</span>' +
+    '<span class="itemActions"><button class="btn-sm btn-ghost" onclick="editEventM(\'' + e.EventID + '\')">수정</button>' +
+    '<button class="btn-sm btn-danger" onclick="deleteEventM(\'' + e.EventID + '\')">삭제</button></span></div>').join('') || '<div class="emptyState">일정 없음</div>';
   html += '<div class="cardTitle" style="margin-top:14px;">일지</div>';
-  html += res.data.journal.map(j => '<div class="rowLine"><span>[' + j.EntryType + '] ' + (j.Title || '(제목없음)') + '</span></div>').join('') || '<div class="emptyState">일지 없음</div>';
+  html += DAY_JOURNAL_CACHE.map(j => '<div class="itemRow"><span>[' + j.EntryType + '] ' + (j.Title || '(제목없음)') + '</span>' +
+    '<span class="itemActions"><button class="btn-sm btn-ghost" onclick="editJournalM(\'' + j.EntryID + '\')">수정</button>' +
+    '<button class="btn-sm btn-danger" onclick="deleteJournalM(\'' + j.EntryID + '\')">삭제</button></span></div>').join('') || '<div class="emptyState">일지 없음</div>';
   html += '<div class="segTabs" style="margin-top:16px;">' +
     '<button class="segBtn active" data-add="event" onclick="switchAddSeg(\'event\')">일정</button>' +
     '<button class="segBtn" data-add="worklog" onclick="switchAddSeg(\'worklog\')">작업일지</button>' +
@@ -492,6 +531,57 @@ async function refreshDaySheet() {
     '<div id="addFormBox"></div>';
   document.getElementById('sheetBody').innerHTML = html;
   switchAddSeg('event');
+}
+async function deleteEventM(id) {
+  if (!confirm('이 일정을 삭제할까요?')) return;
+  const res = await api('deleteEvent', [id]);
+  if (!res.success) { alert(res.message); return; }
+  refreshDaySheet(); fetchCalendar();
+}
+async function deleteJournalM(id) {
+  if (!confirm('이 일지를 삭제할까요?')) return;
+  const res = await api('deleteJournalEntry', [id]);
+  if (!res.success) { alert(res.message); return; }
+  refreshDaySheet();
+}
+function editEventM(id) {
+  const e = DAY_EVENTS_CACHE.find(x => x.EventID === id);
+  if (!e) return;
+  document.querySelectorAll('.segBtn').forEach(b => b.classList.remove('active'));
+  const isSwap = e.Type === '대근';
+  document.getElementById('addFormBox').innerHTML =
+    '<div class="cardTitle">일정 수정</div>' +
+    '<div class="field"><label>유형</label><select id="eEvType"><option' + (e.Type === '휴가' ? ' selected' : '') + '>휴가</option><option' + (isSwap ? ' selected' : '') + '>대근</option><option' + (e.Type === '건강검진' ? ' selected' : '') + '>건강검진</option><option' + (e.Type === '교육' ? ' selected' : '') + '>교육</option><option' + (e.Type === '개인일정' ? ' selected' : '') + '>개인일정</option></select></div>' +
+    (isSwap ? '<div class="field"><label>대근 금액</label><input id="eEvAmount" type="number" value="' + (e.EventAmount || '') + '"></div>'
+      : '<div class="field"><label>시간</label><input id="eEvHours" type="number" value="' + (e.EventHours || '') + '"></div>') +
+    '<div class="field"><label>메모</label><input id="eEvMemo" value="' + (e.Memo || '').replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field"><label><input type="checkbox" id="eEvImportant"' + (String(e.IsImportant) === 'true' ? ' checked' : '') + '> 중요일정</label></div>' +
+    '<button class="btn btn-gold" onclick="saveEventEditM(\'' + id + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="switchAddSeg(\'event\')">취소</button>';
+}
+async function saveEventEditM(id) {
+  const patch = { Type: document.getElementById('eEvType').value, Memo: document.getElementById('eEvMemo').value, IsImportant: document.getElementById('eEvImportant').checked };
+  if (document.getElementById('eEvAmount')) patch.EventAmount = Number(document.getElementById('eEvAmount').value);
+  if (document.getElementById('eEvHours')) patch.EventHours = Number(document.getElementById('eEvHours').value);
+  const res = await api('updateEvent', [id, patch]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  refreshDaySheet(); fetchCalendar();
+}
+function editJournalM(id) {
+  const j = DAY_JOURNAL_CACHE.find(x => x.EntryID === id);
+  if (!j) return;
+  document.querySelectorAll('.segBtn').forEach(b => b.classList.remove('active'));
+  document.getElementById('addFormBox').innerHTML =
+    '<div class="cardTitle">일지 수정</div>' +
+    '<div class="field"><label>제목</label><input id="eJTitle" value="' + (j.Title || '').replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field"><label>내용</label><input id="eJContent" value="' + (j.Content || '').replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field"><label><input type="checkbox" id="eJImportant"' + (String(j.IsImportant) === 'true' ? ' checked' : '') + '> 중요일정</label></div>' +
+    '<button class="btn btn-gold" onclick="saveJournalEditM(\'' + id + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="switchAddSeg(\'event\')">취소</button>';
+}
+async function saveJournalEditM(id) {
+  const patch = { Title: document.getElementById('eJTitle').value, Content: document.getElementById('eJContent').value, IsImportant: document.getElementById('eJImportant').checked };
+  const res = await api('updateJournalEntry', [id, patch]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  refreshDaySheet();
 }
 function switchAddSeg(type) {
   document.querySelectorAll('.segBtn').forEach(b => b.classList.toggle('active', b.dataset.add === type));
@@ -581,15 +671,28 @@ async function renderPayrollCard(profile) {
   if (d.needsInit) return '<div class="card"><div class="cardTitle">' + profile.Name + '</div><div class="emptyState">급여 설정이 없어요. 설정 탭에서 등록하세요.</div></div>';
   const est = d.estimate;
   const oid = profile.ProfileID;
-  return '<div class="card"><div class="cardTitle">' + profile.Name + ' · ' + est.periodStart + ' ~ ' + est.periodEnd + ' → ' + est.payMonth + ' 지급</div>' +
+  const detailId = 'payDetail-' + oid;
+  return '<div class="card">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="togglePayDetail(\'' + detailId + '\')">' +
+    '<div><div class="cardTitle" style="margin-bottom:2px;">' + profile.Name + '</div><div style="font-size:22px;font-weight:800;">' + fmtWon(est.estimated) + '</div><div class="muted">실수령 추정</div></div>' +
+    '<span id="' + detailId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 항목보기</span></div>' +
+    '<div id="' + detailId + '" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">' +
+    '<div class="muted" style="margin-bottom:6px;">' + est.periodStart + ' ~ ' + est.periodEnd + ' → ' + est.payMonth + ' 지급</div>' +
     est.lineItems.map(it => {
       const neg = it.amount < 0;
       return '<div class="rowLine"><span' + (neg ? ' style="color:var(--danger);"' : '') + '>' + it.label + '</span><span class="amt"' + (neg ? ' style="color:var(--danger);"' : '') + '>' + (neg ? '-' : '') + fmtWon(Math.abs(it.amount)) + '</span></div>';
     }).join('') +
-    '<div class="rowLine" style="margin-top:6px;font-weight:800;"><span>실수령 추정</span><span class="amt">' + fmtWon(est.estimated) + '</span></div>' +
+    '</div>' +
     '<div class="muted" style="margin-top:10px;">' + (d.confirmedSalary ? '이미 확정됨: ' + fmtWon(d.confirmedSalary.ConfirmedAmount) : '이번 달 아직 확정 안 함') + '</div>' +
     '<div class="field"><label>실제 입금액</label><input id="payConfirmAmount-' + oid + '" type="number"></div>' +
     '<button class="btn btn-gold" onclick="submitPayrollConfirm(\'' + oid + '\')">확정 입력</button></div>';
+}
+function togglePayDetail(id) {
+  const box = document.getElementById(id);
+  const arrow = document.getElementById(id + '-arrow');
+  const open = box.style.display !== 'none';
+  box.style.display = open ? 'none' : '';
+  arrow.innerText = open ? '▸ 항목보기' : '▾ 접기';
 }
 async function submitPayrollConfirm(ownerId) {
   const amount = Number(document.getElementById('payConfirmAmount-' + ownerId).value);
@@ -629,11 +732,12 @@ async function loadLedger() {
     '<div class="field"><label>카테고리(세부)</label><select id="ltCatDetail"></select></div>' +
     '<div class="field"><label>날짜</label><input id="ltDate" type="date" value="' + ymd(new Date()) + '"></div>' +
     '<div class="field"><label>금액</label><input id="ltAmount" type="number"></div>' +
+    '<div class="field"><label>메모(선택, 어디에 썼는지)</label><input id="ltMemo" placeholder="예: 이마트 장보기"></div>' +
     '<button class="btn btn-gold" onclick="submitLtExpense()">저장</button></div>' +
     '<div class="card"><div class="cardTitle">최근 거래 (이번 달' + (SCOPE !== 'shared' ? ' · ' + profileName(SCOPE) : '') + ')</div><div id="ltTxnList">' +
     (d.transactions.map(t => {
       const sign = t.TxnType === '지출' ? '-' : '+'; const color = t.TxnType === '지출' ? 'var(--danger)' : 'var(--success)';
-      return '<div class="rowLine"><span>' + t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') + (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + '</span><span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + '</span></div>';
+      return '<div class="rowLine"><span>' + t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') + (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' <span class="muted">(' + t.Memo + ')</span>' : '') + '</span><span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + '</span></div>';
     }).join('') || '<div class="emptyState">이번 달 거래 없음</div>') + '</div></div>';
   toggleLtPayMethod();
 
@@ -676,6 +780,7 @@ async function submitLtExpense() {
     AccountID: byCard ? '' : document.getElementById('ltAccount').value,
     CardID: byCard ? document.getElementById('ltCard').value : '',
     CategoryID: document.getElementById('ltCatDetail').value,
+    Memo: document.getElementById('ltMemo').value,
     TxnDate: document.getElementById('ltDate').value, Amount: Number(document.getElementById('ltAmount').value), TxnType: '지출', Source: '수동', Status: 'confirmed'
   };
   if (!txn.Amount) { alert('금액을 입력하세요.'); return; }
@@ -695,21 +800,22 @@ async function submitLtIncome() {
 
 /* ---- 지출목표(예산) ---- */
 function loadBudgetPanel(groupNames, categories) {
+  const grouped = {};
+  categories.forEach(c => { (grouped[c.GroupName] = grouped[c.GroupName] || []).push(c); });
+  const checksHtml = Object.keys(grouped).map(g =>
+    '<div class="muted" style="margin-top:6px;">' + g + '</div>' +
+    grouped[g].map(c => '<label style="display:block;font-size:13px;margin:3px 0;"><input type="checkbox" class="bgCatCheck" value="' + c.CategoryID + '"> ' + c.Name + '</label>').join('')
+  ).join('');
   document.getElementById('ltBudget').innerHTML =
     '<div class="card"><div class="cardTitle">지출목표 추가</div>' +
-    '<div class="field"><label>이름</label><input id="bgLabel" placeholder="예: 생활비"></div>' +
-    '<div class="field"><label>범위</label><select id="bgScope" onchange="onBgScopeChange()"><option value="group">카테고리 그룹 전체</option><option value="category">특정 카테고리만</option></select></div>' +
-    '<div class="field" id="bgGroupRow"><label>그룹</label><select id="bgGroup">' + groupNames.map(g => '<option>' + g + '</option>').join('') + '</select></div>' +
-    '<div class="field" id="bgCatRow" style="display:none;"><label>카테고리</label><select id="bgCategory">' + categories.map(c => '<option value="' + c.CategoryID + '">' + c.GroupName + ' · ' + c.Name + '</option>').join('') + '</select></div>' +
+    '<div class="field"><label>이름</label><input id="bgLabel" placeholder="예: 외식비(식비+카페+음식점)"></div>' +
+    '<div class="field"><label>범위(개인/공동)</label><select id="bgOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '">' + p.Name + ' 개인</option>').join('') + '<option value="shared">공동(가족 전체)</option></select></div>' +
+    '<div class="field"><label>카테고리(여러 개 선택 가능)</label><div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:8px;">' + checksHtml + '</div></div>' +
     '<div class="field"><label>월 한도</label><input id="bgLimit" type="number"></div>' +
-    '<button class="btn btn-gold" onclick="submitBudget()">추가</button></div>' +
+    '<button class="btn btn-gold" onclick="submitBudget()">추가</button>' +
+    '<div class="muted" style="margin-top:6px;">이미 다른 목표에 쓰인 카테고리는 또 고르면 막혀요(중복 집계 방지).</div></div>' +
     '<div class="card"><div class="cardTitle">이번 달 지출목표 현황</div><div id="bgList">불러오는 중...</div></div>';
   fetchBudgetStatus();
-}
-function onBgScopeChange() {
-  const isCat = document.getElementById('bgScope').value === 'category';
-  document.getElementById('bgCatRow').style.display = isCat ? '' : 'none';
-  document.getElementById('bgGroupRow').style.display = isCat ? 'none' : '';
 }
 async function fetchBudgetStatus() {
   const res = await api('getBudgetStatus', [todayYm()]);
@@ -719,19 +825,19 @@ async function fetchBudgetStatus() {
   const msgMap = { good: '👍 여유있어요', warn: '⚠️ 한도에 가까워지고 있어요', danger: '🚨 한도 초과!' };
   box.innerHTML = res.data.map(b => {
     const pct = Math.min(100, Math.round(b.Pct * 100));
-    return '<div style="margin-bottom:14px;"><div class="rowLine"><span>' + b.Label + '</span><button class="btn-sm btn-danger" onclick="deleteBudgetM(\'' + b.BudgetID + '\')">삭제</button></div>' +
+    const ownerLabel = b.OwnerID === 'shared' ? '공동' : profileName(b.OwnerID);
+    return '<div style="margin-bottom:14px;"><div class="rowLine"><span>' + b.Label + ' <span class="muted">(' + ownerLabel + ')</span></span><button class="btn-sm btn-danger" onclick="deleteBudgetM(\'' + b.BudgetID + '\')">삭제</button></div>' +
       '<div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:' + colorMap[b.Status] + ';"></div></div>' +
       '<div class="muted">' + fmtWon(b.Spent) + ' / ' + fmtWon(b.MonthlyLimit) + ' (' + pct + '%) — ' + msgMap[b.Status] + '</div></div>';
   }).join('') || '<div class="emptyState">등록된 지출목표 없음</div>';
 }
 async function submitBudget() {
-  const isCat = document.getElementById('bgScope').value === 'category';
-  const res = await api('addBudget', [document.getElementById('bgLabel').value,
-    isCat ? '' : document.getElementById('bgGroup').value,
-    isCat ? document.getElementById('bgCategory').value : '',
-    Number(document.getElementById('bgLimit').value)]);
+  const ids = Array.from(document.querySelectorAll('.bgCatCheck:checked')).map(c => c.value);
+  if (!ids.length) { alert('카테고리를 하나 이상 선택하세요.'); return; }
+  const res = await api('addBudget', [document.getElementById('bgLabel').value, document.getElementById('bgOwner').value, ids, Number(document.getElementById('bgLimit').value)]);
   if (!res.success) { alert('저장 실패: ' + res.message); return; }
   document.getElementById('bgLabel').value = ''; document.getElementById('bgLimit').value = '';
+  document.querySelectorAll('.bgCatCheck:checked').forEach(c => c.checked = false);
   fetchBudgetStatus();
 }
 async function deleteBudgetM(id) {
