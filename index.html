@@ -331,15 +331,27 @@ async function fetchHome() {
     '<div class="heroNumber" style="color:' + netColor + ';">' + (d.netCashflow >= 0 ? '+' : '') + fmtWon(d.netCashflow) + '</div>' +
     '<div class="heroSub">수입 ' + fmtWon(d.totalIncome) + ' · 지출 ' + fmtWon(d.totalExpense) + '</div></div>';
 
+  html += accordionCard('순자산 (자산-부채)', 'home-networth', true,
+    '<div style="font-size:20px;font-weight:800;margin-bottom:4px;">' + fmtWon(d.netWorth) + '</div>' +
+    '<div class="muted" style="margin-bottom:8px;">자산 ' + fmtWon(d.totalAssets) + (d.totalLiabilities ? ' - 부채 ' + fmtWon(d.totalLiabilities) : '') + '</div>' +
+    d.assetList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt">' + fmtWon(a.amount) + '</span></div>').join('') +
+    (d.liabilityList.length ? '<div class="muted" style="margin:6px 0 2px;">부채</div>' + d.liabilityList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt" style="color:var(--danger);">-' + fmtWon(a.amount) + '</span></div>').join('') : ''),
+    null);
+
+  if (d.usable) {
+    html += accordionCard('이번 달 사용가능액', 'home-usable', true,
+      '<div style="font-size:20px;font-weight:800;">' + fmtWon(d.usable.usable) + '</div>' +
+      '<div class="muted" style="margin-bottom:8px;">하루 약 ' + fmtWon(d.usable.dailyUsable) + ' (남은 ' + d.usable.daysLeft + '일)</div>' +
+      '<div class="rowLine"><span>예상수입</span><span class="amt">' + fmtWon(d.usable.predictedIncome) + '</span></div>' +
+      '<div class="rowLine"><span>이미 쓴 지출</span><span class="amt">-' + fmtWon(d.usable.spentSoFar) + '</span></div>' +
+      '<div class="rowLine"><span>남은 고정지출</span><span class="amt">-' + fmtWon(d.usable.remainingRecurring) + '</span></div>',
+      null);
+  }
+
   html += accordionCard('예상 급여', 'home-payroll', true,
     d.predictedPayroll.map(p => '<div class="rowLine"><span>' + p.name + '</span><span class="amt">' + fmtWon(p.amount) + '</span></div>').join('') +
     '<div class="rowLine" style="font-weight:800;"><span>합계(예상)</span><span class="amt">' + fmtWon(d.predictedPayrollTotal) + '</span></div>',
     'payroll');
-
-  html += accordionCard('자산현황', 'home-assets', true,
-    '<div style="font-size:20px;font-weight:800;margin-bottom:8px;">' + fmtWon(d.totalAssets) + '</div>' +
-    d.assetList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt">' + fmtWon(a.amount) + '</span></div>').join(''),
-    null);
 
   html += accordionCard('지출목표', 'home-budget', true,
     (d.budgets.map(b => {
@@ -359,7 +371,27 @@ async function fetchHome() {
     (d.topGoals.map(g => { const pct = Math.min(100, Math.round(g.progress * 100)); return '<div style="margin-bottom:10px;"><div class="rowLine"><span>' + g.name + '</span><span>' + pct + '%</span></div><div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:var(--gold);"></div></div></div>'; }).join('') || '<div class="emptyState">등록된 목표 없음</div>'),
     'savings');
 
+  html += '<div class="card"><div class="cardTitle">월말 마감</div>' +
+    '<button class="btn btn-ghost" onclick="closeThisMonthM()">이번 달 마감하기</button>' +
+    '<div id="snapshotTrendM" style="margin-top:10px;"></div></div>';
+
   box.innerHTML = html;
+  loadSnapshotTrendM();
+}
+async function closeThisMonthM() {
+  const ym = todayYm();
+  if (!confirm(ym + ' 달을 마감할까요? (다시 눌러도 값만 최신으로 갱신되니 안전해요)')) return;
+  const res = await api('closeMonth', [ym]);
+  if (!res.success) { alert('실패: ' + res.message); return; }
+  alert('마감 완료: 순자산 ' + fmtWon(res.data.NetWorth));
+  loadSnapshotTrendM();
+}
+async function loadSnapshotTrendM() {
+  const res = await api('listMonthlySnapshots');
+  const box = document.getElementById('snapshotTrendM');
+  if (!box) return;
+  if (!res.success) { box.innerText = '오류: ' + res.message; return; }
+  box.innerHTML = res.data.map(s => '<div class="rowLine"><span>' + s.Month + '</span><span class="amt">순자산 ' + fmtWon(s.NetWorth) + '</span></div>').join('') || '<div class="emptyState">아직 마감된 달 없음</div>';
 }
 
 // 접었다 펼 수 있는 카드. jumpView(있으면) → "자세히 보기"로 해당 탭 이동, jumpSub이면 그 탭 안의 서브탭까지 전환.
@@ -711,9 +743,10 @@ async function loadLedger() {
   el.innerHTML =
     '<div class="pillTabs">' +
     '<button class="pill active" data-lt="exp" onclick="switchLtView(\'exp\')">지출</button>' +
+    '<button class="pill" data-lt="transfer" onclick="switchLtView(\'transfer\')">이체</button>' +
     '<button class="pill" data-lt="inc" onclick="switchLtView(\'inc\')">변동소득</button>' +
     '<button class="pill" data-lt="budget" onclick="switchLtView(\'budget\')">지출목표</button></div>' +
-    '<div id="ltExp"></div><div id="ltInc" style="display:none;"></div><div id="ltBudget" style="display:none;"></div>';
+    '<div id="ltExp"></div><div id="ltTransfer" style="display:none;"></div><div id="ltInc" style="display:none;"></div><div id="ltBudget" style="display:none;"></div>';
   const ownerFilter = SCOPE === 'shared' ? 'all' : SCOPE;
   const res = await api('getExpenseTabData', [todayYm(), ownerFilter]);
   if (!res.success) { document.getElementById('ltExp').innerHTML = '오류: ' + res.message; return; }
@@ -735,11 +768,25 @@ async function loadLedger() {
     '<div class="field"><label>메모(선택, 어디에 썼는지)</label><input id="ltMemo" placeholder="예: 이마트 장보기"></div>' +
     '<button class="btn btn-gold" onclick="submitLtExpense()">저장</button></div>' +
     '<div class="card"><div class="cardTitle">최근 거래 (이번 달' + (SCOPE !== 'shared' ? ' · ' + profileName(SCOPE) : '') + ')</div><div id="ltTxnList">' +
-    (d.transactions.map(t => {
+    (d.transactions.filter(t => t.TxnType === '지출' || t.TxnType === '수입').map(t => {
       const sign = t.TxnType === '지출' ? '-' : '+'; const color = t.TxnType === '지출' ? 'var(--danger)' : 'var(--success)';
       return '<div class="rowLine"><span>' + t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') + (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' <span class="muted">(' + t.Memo + ')</span>' : '') + '</span><span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + '</span></div>';
     }).join('') || '<div class="emptyState">이번 달 거래 없음</div>') + '</div></div>';
   toggleLtPayMethod();
+
+  document.getElementById('ltTransfer').innerHTML =
+    '<div class="card"><div class="cardTitle">계좌 간 이체</div>' +
+    '<div class="muted">총자산은 그대로예요 — 계좌별 잔액만 옮겨지고, 수입/지출 통계엔 안 잡혀요.</div>' +
+    '<div class="field"><label>출금 계좌</label><select id="trFromAccount">' + accOpts + '</select></div>' +
+    '<div class="field"><label>입금 계좌</label><select id="trToAccount">' + accOpts + '</select></div>' +
+    '<div class="field"><label>금액</label><input id="trAmount" type="number"></div>' +
+    '<div class="field"><label>날짜</label><input id="trDate" type="date" value="' + ymd(new Date()) + '"></div>' +
+    '<div class="field"><label>메모(선택)</label><input id="trMemo"></div>' +
+    '<button class="btn btn-gold" onclick="submitTransferM()">이체</button></div>' +
+    '<div class="card"><div class="cardTitle">이번 달 이체 내역</div><div id="transferListM">' +
+    (d.transactions.filter(t => t.TxnType === '이체').map(t =>
+      '<div class="rowLine"><span>' + t.TxnDate + ' · ' + t.FromAccountName + ' → ' + t.ToAccountName + '</span><span class="amt">' + fmtWon(t.Amount) + '</span></div>'
+    ).join('') || '<div class="emptyState">이번 달 이체 없음</div>') + '</div></div>';
 
   const tagRes = await api('listIncomeTags');
   const tagOpts = (tagRes.success ? tagRes.data.map(t => '<option value="' + t.TagID + '">' + t.Label + '</option>').join('') : '') + '<option value="__custom__">직접입력</option>';
@@ -770,8 +817,17 @@ function toggleLtPayMethod() {
 function switchLtView(v) {
   document.querySelectorAll('#view-ledger .pill').forEach(b => b.classList.toggle('active', b.dataset.lt === v));
   document.getElementById('ltExp').style.display = v === 'exp' ? '' : 'none';
+  document.getElementById('ltTransfer').style.display = v === 'transfer' ? '' : 'none';
   document.getElementById('ltInc').style.display = v === 'inc' ? '' : 'none';
   document.getElementById('ltBudget').style.display = v === 'budget' ? '' : 'none';
+}
+async function submitTransferM() {
+  const fromId = document.getElementById('trFromAccount').value;
+  const toId = document.getElementById('trToAccount').value;
+  if (fromId === toId) { alert('출금/입금 계좌가 같아요.'); return; }
+  const res = await api('createTransfer', [SCOPE !== 'shared' ? SCOPE : primaryOwnerId(), fromId, toId, Number(document.getElementById('trAmount').value), document.getElementById('trDate').value, document.getElementById('trMemo').value]);
+  if (!res.success) { alert('이체 실패: ' + res.message); return; }
+  loadLedger();
 }
 async function submitLtExpense() {
   const byCard = document.getElementById('ltPayMethod').value === 'card';
@@ -887,17 +943,41 @@ async function renderSettingsAccounts() {
   box.innerHTML = '<div class="muted">불러오는 중...</div>';
   const res = await api('listAccounts');
   if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
-  box.innerHTML = '<div class="card"><div class="cardTitle">계좌 목록</div>' +
-    res.data.map(a => '<div class="rowLine"><span>' + a.Name + ' <span class="muted">(' + (profileName(a.OwnerID) || '공동') + ')</span></span><span class="amt">' + fmtWon(a.CurrentBalance) + ' <button class="btn-sm btn-danger" onclick="delAccount(\'' + a.AccountID + '\')">삭제</button></span></div>').join('') +
-    '</div><div class="card"><div class="cardTitle">계좌 추가</div>' +
+  SETTINGS_ACCOUNTS_CACHE = res.data;
+  box.innerHTML = '<div class="card"><div class="cardTitle">계좌 목록</div><div id="acctListBody">' +
+    res.data.map(a => '<div id="macc-' + a.AccountID + '"><div class="rowLine"><span>' + a.Name + ' <span class="muted">(' + (profileName(a.OwnerID) || '공동') + (String(a.IsLiability) === 'true' ? ', 부채' : '') + ')</span></span><span class="amt">' + fmtWon(a.CurrentBalance) + ' <button class="btn-sm btn-ghost" onclick="editAccountM(\'' + a.AccountID + '\')">수정</button> <button class="btn-sm btn-danger" onclick="delAccount(\'' + a.AccountID + '\')">삭제</button></span></div></div>').join('') +
+    '</div></div><div class="card"><div class="cardTitle">계좌 추가</div>' +
     '<div class="field"><label>이름</label><input id="newAccName"></div>' +
     '<div class="field"><label>소유자</label><select id="newAccOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '">' + p.Name + '</option>').join('') + '<option value="shared">공동</option></select></div>' +
     '<div class="field"><label>유형</label><input id="newAccType" placeholder="급여통장/CMA 등"></div>' +
     '<div class="field"><label>기관</label><input id="newAccInst"></div>' +
+    '<div class="field"><label><input type="checkbox" id="newAccLiability"> 부채 계좌(대출 등)</label></div>' +
     '<button class="btn btn-gold" onclick="addAccountM()">저장</button></div>';
 }
+let SETTINGS_ACCOUNTS_CACHE = [];
+function editAccountM(id) {
+  const a = SETTINGS_ACCOUNTS_CACHE.find(x => x.AccountID === id);
+  if (!a) return;
+  document.getElementById('macc-' + id).innerHTML =
+    '<div class="field"><label>이름</label><input id="eAccName-' + id + '" value="' + a.Name.replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field"><label>유형</label><input id="eAccType-' + id + '" value="' + (a.Type || '').replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field"><label>기관</label><input id="eAccInst-' + id + '" value="' + (a.Institution || '').replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field"><label><input type="checkbox" id="eAccLiability-' + id + '"' + (String(a.IsLiability) === 'true' ? ' checked' : '') + '> 부채 계좌(대출 등)</label></div>' +
+    '<div class="field"><label>현재 잔액(맞으면 그대로 두세요 — 바뀐 만큼만 "조정" 거래로 남아요)</label><input id="eAccBal-' + id + '" type="number" value="' + a.CurrentBalance + '"></div>' +
+    '<button class="btn btn-gold" onclick="saveAccountEditM(\'' + id + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="renderSettingsAccounts()">취소</button>';
+}
+async function saveAccountEditM(id) {
+  const a = SETTINGS_ACCOUNTS_CACHE.find(x => x.AccountID === id);
+  const patch = { Name: document.getElementById('eAccName-' + id).value, Type: document.getElementById('eAccType-' + id).value, Institution: document.getElementById('eAccInst-' + id).value, IsLiability: document.getElementById('eAccLiability-' + id).checked };
+  const newBal = Number(document.getElementById('eAccBal-' + id).value);
+  const res1 = await api('updateAccount', [id, patch]);
+  if (!res1.success) { alert('저장 실패: ' + res1.message); return; }
+  const res2 = await api('adjustAccountBalance', [id, a.OwnerID, newBal, '설정에서 직접 보정']);
+  if (!res2.success) { alert('잔액 조정 실패: ' + res2.message); return; }
+  renderSettingsAccounts();
+}
 async function addAccountM() {
-  const res = await api('addAccount', [document.getElementById('newAccOwner').value, document.getElementById('newAccName').value, document.getElementById('newAccType').value, document.getElementById('newAccInst').value]);
+  const res = await api('addAccount', [document.getElementById('newAccOwner').value, document.getElementById('newAccName').value, document.getElementById('newAccType').value, document.getElementById('newAccInst').value, document.getElementById('newAccLiability').checked]);
   if (!res.success) { alert('실패: ' + res.message); return; }
   renderSettingsAccounts();
 }
@@ -993,6 +1073,7 @@ async function renderSettingsRecurring() {
   const catOpts = d.categories.map(c => '<option value="' + c.CategoryID + '">' + c.GroupName + ' · ' + c.Name + '</option>').join('');
   box.innerHTML = '<div class="card"><div class="cardTitle">고정지출 목록</div>' +
     d.rules.map(r => '<div class="rowLine"><span>' + r.Name + ' <span class="muted">(' + r.OwnerName + ', 매달 ' + r.DayOfMonth + '일)</span></span><span class="amt">' + fmtWon(r.Amount) + ' <button class="btn-sm btn-danger" onclick="delRecurring(\'' + r.RuleID + '\')">삭제</button></span></div>').join('') +
+    '<button class="btn btn-ghost" style="margin-top:10px;" onclick="applyRecurringM()">이번 달 거래로 반영</button>' +
     '</div><div class="card"><div class="cardTitle">고정지출 추가</div>' +
     '<div class="field"><label>이름</label><input id="recName"></div>' +
     '<div class="field"><label>소유자</label><select id="recOwner">' + d.profiles.map(p => '<option value="' + p.ProfileID + '">' + p.Name + '</option>').join('') + '<option value="shared">공동</option></select></div>' +
@@ -1012,6 +1093,14 @@ async function delRecurring(id) {
   const res = await api('deleteRecurringRule', [id]);
   if (!res.success) { alert(res.message); return; }
   renderSettingsRecurring();
+}
+async function applyRecurringM() {
+  if (!confirm('등록된 고정지출을 전부 이번 달 거래로 반영할까요? (이미 반영된 항목은 자동으로 건너뜁니다)')) return;
+  const res = await api('applyRecurringForMonth', [todayYm()]);
+  if (!res.success) { alert('실패: ' + res.message); return; }
+  var msg = res.data.created.length + '건 새로 반영됨';
+  if (res.data.skipped.length) msg += ' / ' + res.data.skipped.length + '건은 이미 반영되어 건너뜀';
+  alert(msg);
 }
 
 function renderSettingsTeam() {
