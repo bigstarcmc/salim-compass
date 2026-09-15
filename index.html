@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1B2A4A">
+<title>살림나침반</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<style>
+:root{
+  --bg:#FBF8F2; --surface:#FFFFFF; --border:#ECE3D2;
+  --ink:#1B2A4A; --ink-soft:#5B6B8C; --ink-mute:#93A0BC;
+  --gold:#C9922E; --gold-deep:#8B6914; --gold-soft:#F4E7CB;
+  --success:#3F7D58; --danger:#B4423D;
+  --day:#E4A93B; --night:#2A3B6B; --off:#C9C2B4;
+  --radius-lg:20px; --radius-md:14px; --radius-sm:10px;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font-family:'Pretendard',-apple-system,sans-serif; -webkit-font-smoothing:antialiased;}
+body{padding-bottom:78px; min-height:100vh;}
+button,input,select,textarea{font-family:inherit;}
+
+/* ---------- Top bar ---------- */
+.topbar{position:sticky; top:0; z-index:20; background:var(--ink); color:#fff;
+  padding:14px 18px 16px; display:flex; align-items:center; justify-content:space-between;
+  border-radius:0 0 22px 22px;}
+.topbar .brand{display:flex; align-items:center; gap:8px;}
+.topbar .compass{font-size:22px; display:inline-block;}
+.topbar .pageTitle{font-size:17px; font-weight:700; letter-spacing:-.2px;}
+.topbar .who{font-size:12px; background:rgba(255,255,255,.14); padding:6px 12px; border-radius:20px; cursor:pointer; border:none; color:#fff;}
+
+/* ---------- Bottom nav ---------- */
+.bottomNav{position:fixed; left:0; right:0; bottom:0; z-index:30; background:var(--surface);
+  border-top:1px solid var(--border); display:flex; padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
+.navBtn{flex:1; background:none; border:none; display:flex; flex-direction:column; align-items:center;
+  gap:2px; padding:6px 2px; color:var(--ink-mute); font-size:10px; font-weight:600; border-radius:12px;}
+.navBtn .navIcon{font-size:20px;}
+.navBtn.active{color:var(--gold-deep);}
+.navBtn.active .navIcon{transform:scale(1.08);}
+
+/* ---------- Content ---------- */
+main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
+.view{display:none;}
+.view.active{display:block; animation:fadeUp .25s ease;}
+@keyframes fadeUp{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
+
+.card{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);
+  padding:16px; margin-bottom:12px;}
+.cardHero{background:var(--ink); color:#fff; border-radius:var(--radius-lg); padding:22px 20px; margin-bottom:14px;
+  position:relative; overflow:hidden;}
+.cardHero::after{content:"🧭"; position:absolute; right:-10px; bottom:-18px; font-size:110px; opacity:.08;}
+.cardTitle{font-size:13px; font-weight:700; color:var(--ink-soft); margin-bottom:10px;}
+.heroLabel{font-size:12px; opacity:.75; margin-bottom:6px;}
+.heroNumber{font-size:32px; font-weight:800; letter-spacing:-.5px; font-variant-numeric:tabular-nums;}
+.heroSub{font-size:12px; opacity:.8; margin-top:6px;}
+
+.muted{color:var(--ink-mute); font-size:12px;}
+.rowLine{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid #F4EFE3; font-size:14px;}
+.rowLine:last-child{border-bottom:none;}
+.rowLine .amt{font-weight:700; font-variant-numeric:tabular-nums;}
+
+.pillTabs{display:flex; gap:6px; margin-bottom:14px; overflow-x:auto;}
+.pill{flex:0 0 auto; padding:8px 16px; border-radius:20px; border:1px solid var(--border); background:var(--surface);
+  color:var(--ink-soft); font-size:13px; font-weight:600;}
+.pill.active{background:var(--ink); color:#fff; border-color:var(--ink);}
+
+.btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; border:none; border-radius:var(--radius-sm);
+  padding:12px 16px; font-size:14px; font-weight:700; cursor:pointer; width:100%;}
+.btn-gold{background:var(--gold); color:#fff;}
+.btn-ghost{background:var(--gold-soft); color:var(--gold-deep);}
+.btn-danger{background:#F6E3E1; color:var(--danger);}
+.btn-sm{width:auto; padding:7px 12px; font-size:12px; border-radius:8px;}
+
+.field{margin-bottom:12px;}
+.field label{display:block; font-size:12px; color:var(--ink-soft); margin-bottom:5px; font-weight:600;}
+.field input, .field select{width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:10px;
+  background:#fff; font-size:14px; color:var(--ink);}
+.field input[type=checkbox]{width:auto;}
+
+.barTrack{background:#F0EAD9; border-radius:6px; height:10px; overflow:hidden; margin:6px 0;}
+.barFill{height:100%; border-radius:6px;}
+
+/* ---------- Calendar ---------- */
+.calHead{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+.calHead button{background:var(--surface); border:1px solid var(--border); border-radius:10px; width:36px; height:36px; font-size:16px;}
+.calHead .ym{font-weight:800; font-size:16px;}
+.weekRow{display:grid; grid-template-columns:repeat(7,1fr); text-align:center; font-size:11px; color:var(--ink-mute); margin-bottom:4px;}
+.dayGrid{display:grid; grid-template-columns:repeat(7,1fr); gap:5px;}
+.dayCell{position:relative; aspect-ratio:1; border-radius:12px; display:flex; align-items:flex-start; justify-content:flex-start;
+  padding:5px; cursor:pointer;}
+.dayCell .num{font-size:12px; font-weight:700;}
+.dayCell .badge{position:absolute; bottom:4px; right:4px; min-width:18px; height:18px; padding:0 4px; border-radius:9px;
+  font-size:9px; font-weight:800; display:flex; align-items:center; justify-content:center; color:#fff;}
+.dayCell.today{outline:2px solid var(--ink);}
+.bg-주{background:#FBF0D3;} .bg-야{background:#E6E9F5;} .bg-휴{background:#F5F3EC;}
+.b-주{background:var(--day); color:#4A3200;} .b-야{background:var(--night);} .b-휴{background:transparent; color:var(--danger); font-size:10px;}
+.b-휴가{background:#3BA36A;} .b-대근주간{background:#C026D3;} .b-대근야간{background:#581C87;}
+.b-교육{background:#2F6FED;} .b-건강검진{background:#0E93A8;} .b-개인일정{background:#6B7280;}
+.dotImp{position:absolute; top:3px; right:4px; font-size:8px;}
+
+.myTeamChip{display:inline-flex; align-items:center; gap:8px; background:var(--gold-soft); color:var(--gold-deep);
+  padding:8px 14px; border-radius:20px; font-weight:700; font-size:13px; margin-bottom:12px;}
+
+/* ---------- Bottom sheet modal ---------- */
+.sheetOverlay{position:fixed; inset:0; background:rgba(27,42,74,.5); z-index:50; display:none;}
+.sheetOverlay.open{display:block;}
+.sheet{position:fixed; left:0; right:0; bottom:0; z-index:51; background:var(--surface);
+  border-radius:22px 22px 0 0; max-height:85vh; overflow-y:auto; transform:translateY(100%); transition:transform .25s ease;
+  padding-bottom:calc(20px + env(safe-area-inset-bottom));}
+.sheetOverlay.open .sheet{transform:translateY(0);}
+.sheetHandle{width:40px; height:4px; background:var(--border); border-radius:2px; margin:10px auto;}
+.sheetHead{display:flex; justify-content:space-between; align-items:center; padding:2px 20px 10px;}
+.sheetHead h3{margin:0; font-size:16px;}
+.sheetHead button{background:none; border:none; font-size:18px; color:var(--ink-mute);}
+.sheetBody{padding:0 20px 10px;}
+
+.segTabs{display:flex; gap:6px; margin:10px 0 14px;}
+.segBtn{flex:1; padding:9px; border-radius:10px; border:1px solid var(--border); background:#fff; font-size:12px; font-weight:700; color:var(--ink-soft);}
+.segBtn.active{background:var(--ink); color:#fff; border-color:var(--ink);}
+
+.emptyState{text-align:center; padding:30px 10px; color:var(--ink-mute); font-size:13px;}
+
+.setupOverlay{position:fixed; inset:0; background:var(--bg); z-index:100; display:flex; align-items:center; padding:24px;}
+.setupBox{width:100%; max-width:400px; margin:0 auto;}
+.setupBox h1{font-size:24px; margin:0 0 6px;}
+.setupBox p{color:var(--ink-soft); font-size:13px; margin-bottom:20px; line-height:1.6;}
+.err{color:var(--danger); font-size:12px; margin-top:6px; min-height:16px;}
+</style>
+</head>
+<body>
+
+<div class="setupOverlay" id="setupOverlay">
+  <div class="setupBox">
+    <h1>🧭 살림나침반</h1>
+    <p>처음 한 번만 연결하면 돼요. Apps Script에서 배포한 웹앱 URL과 API 키를 넣어주세요.</p>
+    <div class="field"><label>웹앱 URL</label><input id="setupUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
+    <div class="field"><label>API 키</label><input id="setupKey" placeholder="Config.gs의 API_KEY 값"></div>
+    <button class="btn btn-gold" onclick="doSetup()">연결하기</button>
+    <div class="err" id="setupErr"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <header class="topbar">
+    <div class="brand"><span class="compass">🧭</span><span class="pageTitle" id="pageTitle">홈</span></div>
+    <button class="who" id="whoBadge" onclick="openOwnerPicker()">-</button>
+  </header>
+
+  <main>
+    <div class="view active" id="view-home"></div>
+    <div class="view" id="view-calendar"></div>
+    <div class="view" id="view-payroll"></div>
+    <div class="view" id="view-ledger"></div>
+    <div class="view" id="view-savings"></div>
+  </main>
+
+  <nav class="bottomNav">
+    <button class="navBtn active" data-v="home" onclick="switchView('home')"><span class="navIcon">🏠</span><span>홈</span></button>
+    <button class="navBtn" data-v="calendar" onclick="switchView('calendar')"><span class="navIcon">📅</span><span>캘린더</span></button>
+    <button class="navBtn" data-v="payroll" onclick="switchView('payroll')"><span class="navIcon">💰</span><span>급여</span></button>
+    <button class="navBtn" data-v="ledger" onclick="switchView('ledger')"><span class="navIcon">📒</span><span>가계부</span></button>
+    <button class="navBtn" data-v="savings" onclick="switchView('savings')"><span class="navIcon">🎯</span><span>저축</span></button>
+  </nav>
+</div>
+
+<div class="sheetOverlay" id="sheetOverlay" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet">
+    <div class="sheetHandle"></div>
+    <div class="sheetHead"><h3 id="sheetTitle"></h3><button onclick="closeSheet()">✕</button></div>
+    <div class="sheetBody" id="sheetBody"></div>
+  </div>
+</div>
+
+<script>
+/* ================= 설정/연결 ================= */
+const CFG_KEY = 'salimCompassConfig';
+let CFG = JSON.parse(localStorage.getItem(CFG_KEY) || 'null');
+let PROFILES = [];
+let CURRENT_OWNER = null;
+
+function doSetup() {
+  const url = document.getElementById('setupUrl').value.trim();
+  const key = document.getElementById('setupKey').value.trim();
+  const err = document.getElementById('setupErr');
+  if (!url || !key) { err.innerText = 'URL과 키를 모두 입력하세요.'; return; }
+  err.innerText = '연결 확인 중...';
+  callApiRaw(url, key, 'listProfiles', []).then(res => {
+    if (!res.success) { err.innerText = '연결 실패: ' + res.message; return; }
+    PROFILES = res.data;
+    CFG = { url, key, ownerId: PROFILES[0] ? PROFILES[0].ProfileID : null };
+    localStorage.setItem(CFG_KEY, JSON.stringify(CFG));
+    startApp();
+  }).catch(e => { err.innerText = '통신 오류: ' + e.message; });
+}
+
+function callApiRaw(url, key, action, args) {
+  const u = url + '?action=' + encodeURIComponent(action) + '&key=' + encodeURIComponent(key) + '&args=' + encodeURIComponent(JSON.stringify(args));
+  return fetch(u).then(r => r.json());
+}
+function api(action, args = []) { return callApiRaw(CFG.url, CFG.key, action, args); }
+
+function openOwnerPicker() {
+  if (!PROFILES.length) return;
+  const names = PROFILES.map(p => p.Name).join(' / ');
+  const pick = prompt('누구로 볼까요? (' + names + ')', currentOwnerName());
+  const found = PROFILES.find(p => p.Name === pick);
+  if (found) { CURRENT_OWNER = found.ProfileID; CFG.ownerId = found.ProfileID; localStorage.setItem(CFG_KEY, JSON.stringify(CFG)); updateWhoBadge(); reloadCurrentView(); }
+}
+function currentOwnerName() { const p = PROFILES.find(p => p.ProfileID === CURRENT_OWNER); return p ? p.Name : ''; }
+function updateWhoBadge() { document.getElementById('whoBadge').innerText = currentOwnerName() + ' 님'; }
+
+/* ================= 초기화 ================= */
+async function startApp() {
+  document.getElementById('setupOverlay').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  if (!PROFILES.length) {
+    const res = await api('listProfiles');
+    if (res.success) PROFILES = res.data;
+  }
+  CURRENT_OWNER = CFG.ownerId || (PROFILES[0] && PROFILES[0].ProfileID);
+  updateWhoBadge();
+  switchView('home');
+}
+
+if (CFG && CFG.url && CFG.key) { startApp(); }
+else { document.getElementById('setupOverlay').style.display = 'flex'; }
+
+/* ================= 공통 유틸 ================= */
+function fmtWon(n) { return Math.round(Number(n) || 0).toLocaleString('ko-KR') + '원'; }
+function todayYm() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+
+const TITLES = { home: '홈', calendar: '캘린더', payroll: '급여예측', ledger: '가계부', savings: '저축목표' };
+function switchView(v) {
+  document.querySelectorAll('.navBtn').forEach(b => b.classList.toggle('active', b.dataset.v === v));
+  document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === 'view-' + v));
+  document.getElementById('pageTitle').innerText = TITLES[v];
+  reloadCurrentView(v);
+}
+function reloadCurrentView(v) {
+  v = v || document.querySelector('.navBtn.active').dataset.v;
+  if (v === 'home') loadHome();
+  if (v === 'calendar') loadCalendar();
+  if (v === 'payroll') loadPayroll();
+  if (v === 'ledger') loadLedger();
+  if (v === 'savings') loadSavings();
+}
+
+function openSheet(title, bodyHtml) {
+  document.getElementById('sheetTitle').innerText = title;
+  document.getElementById('sheetBody').innerHTML = bodyHtml;
+  document.getElementById('sheetOverlay').classList.add('open');
+}
+function closeSheet() { document.getElementById('sheetOverlay').classList.remove('open'); }
+
+/* ================= 홈 ================= */
+let homePeriod = 'thisMonth';
+function loadHome() {
+  const el = document.getElementById('view-home');
+  el.innerHTML = '<div class="pillTabs" id="homePills"></div><div id="homeContent" class="muted" style="padding:20px 0;">불러오는 중...</div>';
+  document.getElementById('homePills').innerHTML = ['thisMonth:이번달', 'lastMonth:지난달', 'last3:최근3개월', 'thisYear:올해'].map(p => {
+    const [k, label] = p.split(':');
+    return '<button class="pill' + (k === homePeriod ? ' active' : '') + '" onclick="setHomePeriod(\'' + k + '\')">' + label + '</button>';
+  }).join('');
+  fetchHome();
+}
+function setHomePeriod(p) { homePeriod = p; loadHome(); }
+function periodRange(preset) {
+  const now = new Date(); let start, end;
+  if (preset === 'thisMonth') { start = new Date(now.getFullYear(), now.getMonth(), 1); end = new Date(now.getFullYear(), now.getMonth() + 1, 0); }
+  else if (preset === 'lastMonth') { start = new Date(now.getFullYear(), now.getMonth() - 1, 1); end = new Date(now.getFullYear(), now.getMonth(), 0); }
+  else if (preset === 'last3') { start = new Date(now.getFullYear(), now.getMonth() - 2, 1); end = new Date(now.getFullYear(), now.getMonth() + 1, 0); }
+  else { start = new Date(now.getFullYear(), 0, 1); end = new Date(now.getFullYear(), 11, 31); }
+  return [ymd(start), ymd(end)];
+}
+async function fetchHome() {
+  const [start, end] = periodRange(homePeriod);
+  const res = await api('getHomeSummary', [start, end]);
+  const box = document.getElementById('homeContent');
+  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
+  const d = res.data;
+  const netColor = d.netCashflow >= 0 ? 'var(--success)' : 'var(--danger)';
+  box.innerHTML =
+    '<div class="cardHero"><div class="heroLabel">순현금흐름 (실제 확정된 거래 기준)</div>' +
+    '<div class="heroNumber" style="color:' + (d.netCashflow >= 0 ? '#8fe3b3' : '#f3a9a3') + ';">' + (d.netCashflow >= 0 ? '+' : '') + fmtWon(d.netCashflow) + '</div>' +
+    '<div class="heroSub">수입 ' + fmtWon(d.totalIncome) + ' · 지출 ' + fmtWon(d.totalExpense) + '</div></div>' +
+    '<div class="card"><div class="cardTitle">이번 달 예상 급여</div>' +
+    d.predictedPayroll.map(p => '<div class="rowLine"><span>' + p.name + '</span><span class="amt">' + fmtWon(p.amount) + '</span></div>').join('') +
+    '<div class="rowLine" style="font-weight:800;"><span>합계(예상)</span><span class="amt">' + fmtWon(d.predictedPayrollTotal) + '</span></div></div>' +
+    '<div class="card"><div class="cardTitle">현재 자산현황</div><div style="font-size:20px;font-weight:800;margin-bottom:8px;">' + fmtWon(d.totalAssets) + '</div>' +
+    d.assetList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt">' + fmtWon(a.amount) + '</span></div>').join('') + '</div>' +
+    '<div class="card"><div class="cardTitle">큰 지출 Top 5</div>' +
+    (d.topExpenses.map(e => '<div class="rowLine"><span>' + e.date + (e.source ? ' · ' + e.source : '') + '</span><span class="amt">' + fmtWon(e.amount) + '</span></div>').join('') || '<div class="emptyState">지출 기록 없음</div>') + '</div>' +
+    '<div class="card"><div class="cardTitle">저축목표</div>' +
+    (d.topGoals.map(g => { const pct = Math.min(100, Math.round(g.progress * 100)); return '<div style="margin-bottom:10px;"><div class="rowLine"><span>' + g.name + '</span><span>' + pct + '%</span></div><div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:var(--gold);"></div></div></div>'; }).join('') || '<div class="emptyState">등록된 목표 없음</div>') + '</div>';
+}
+
+/* ================= 캘린더 ================= */
+let calDate = new Date();
+let calSelectedDate = null;
+const WD = ['일', '월', '화', '수', '목', '금', '토'];
+
+function loadCalendar() {
+  const el = document.getElementById('view-calendar');
+  el.innerHTML =
+    '<div id="myTeamBox"></div>' +
+    '<div class="card"><div class="calHead"><button onclick="calShift(-1)">◀</button><span class="ym" id="calYm"></span><button onclick="calShift(1)">▶</button></div>' +
+    '<div class="weekRow">' + WD.map(w => '<div>' + w + '</div>').join('') + '</div>' +
+    '<div class="dayGrid" id="calGrid"></div></div>';
+  fetchCalendar();
+}
+function calShift(n) { calDate.setMonth(calDate.getMonth() + n); fetchCalendar(); }
+function calYm() { return calDate.getFullYear() + '-' + String(calDate.getMonth() + 1).padStart(2, '0'); }
+
+async function fetchCalendar() {
+  document.getElementById('calYm').innerText = calYm();
+  const res = await api('getCalendarView', [CURRENT_OWNER, calYm(), false]);
+  if (!res.success) { document.getElementById('calGrid').innerText = '오류: ' + res.message; return; }
+  const d = res.data;
+  document.getElementById('myTeamBox').innerHTML = '<div class="myTeamChip">🧭 내 조: ' + (d.currentTeam || '미설정') + '</div>';
+  renderCalGrid(d.shifts, d.events);
+}
+function todayStr() { const t = new Date(); return ymd(t); }
+function renderCalGrid(shifts, events) {
+  const dates = Object.keys(shifts).sort();
+  const lead = new Date(dates[0]).getDay();
+  const cells = Array(lead).fill(null).concat(dates);
+  const today = todayStr();
+  document.getElementById('calGrid').innerHTML = cells.map(dateStr => {
+    if (!dateStr) return '<div></div>';
+    const type = shifts[dateStr];
+    const num = Number(dateStr.split('-')[2]);
+    const dayEvents = events.filter(e => e.EventDate === dateStr);
+    let badgeCls = 'b-' + type, badgeText = type;
+    let important = false;
+    if (dayEvents.length) {
+      important = dayEvents.some(e => String(e.IsImportant) === 'true');
+      const swap = dayEvents.find(e => e.Type === '대근');
+      const vac = dayEvents.find(e => e.Type === '휴가');
+      const pick = swap || vac || dayEvents[0];
+      if (pick.Type === '대근') { const night = pick.SwapDirection === '야간'; badgeCls = night ? 'b-대근야간' : 'b-대근주간'; badgeText = night ? '대근(야)' : '대근(주)'; }
+      else { badgeCls = 'b-' + pick.Type; badgeText = pick.Type; }
+    }
+    return '<div class="dayCell bg-' + type + (dateStr === today ? ' today' : '') + '" onclick="openDaySheet(\'' + dateStr + '\')">' +
+      '<span class="num">' + num + '</span>' +
+      '<span class="badge ' + badgeCls + '">' + badgeText + '</span>' +
+      (important ? '<span class="dotImp">🔴</span>' : '') + '</div>';
+  }).join('');
+}
+
+async function openDaySheet(dateStr) {
+  calSelectedDate = dateStr;
+  openSheet(dateStr, '<div class="muted">불러오는 중...</div>');
+  const res = await api('getDateDetail', [dateStr]);
+  if (!res.success) return;
+  let html = '<div class="cardTitle" style="margin-top:6px;">일정</div>';
+  html += res.data.events.map(e => '<div class="rowLine"><span>' + e.Type + (e.Memo ? ' - ' + e.Memo : '') + '</span></div>').join('') || '<div class="emptyState">일정 없음</div>';
+  html += '<div class="cardTitle" style="margin-top:14px;">일지</div>';
+  html += res.data.journal.map(j => '<div class="rowLine"><span>' + (j.Title || '(제목없음)') + '</span></div>').join('') || '<div class="emptyState">일지 없음</div>';
+  html += '<div style="margin-top:16px;"><button class="btn btn-gold" onclick="showAddEventForm()">＋ 일정 추가</button></div>';
+  html += '<div id="addEventFormBox"></div>';
+  document.getElementById('sheetBody').innerHTML = html;
+}
+
+async function showAddEventForm() {
+  const box = document.getElementById('addEventFormBox');
+  box.innerHTML =
+    '<div class="field"><label>유형</label><select id="qEvType" onchange="qToggleFields()"><option>휴가</option><option>대근</option><option>건강검진</option><option>교육</option><option>개인일정</option></select></div>' +
+    '<div class="field" id="qLeaveRow"><label>휴가코드</label><select id="qLeaveCode"><option value="">선택안함</option></select></div>' +
+    '<div class="field" id="qSwapRow" style="display:none;"><label>대근 근무유형</label><select id="qSwapType"><option value="주간">주간대근</option><option value="야간">야간대근</option></select></div>' +
+    '<div class="field"><label>메모</label><input id="qMemo"></div>' +
+    '<div class="field"><label><input type="checkbox" id="qImportant"> 중요일정</label></div>' +
+    '<button class="btn btn-gold" onclick="submitQuickEvent()">저장</button>';
+  const res = await api('listLeaveCodes');
+  if (res.success) {
+    const sel = document.getElementById('qLeaveCode');
+    res.data.forEach(c => { const o = document.createElement('option'); o.value = c.CodeID; o.text = c.Name; sel.appendChild(o); });
+  }
+  qToggleFields();
+}
+function qToggleFields() {
+  const isSwap = document.getElementById('qEvType').value === '대근';
+  const isPersonal = document.getElementById('qEvType').value === '개인일정';
+  document.getElementById('qSwapRow').style.display = isSwap ? '' : 'none';
+  document.getElementById('qLeaveRow').style.display = (isSwap || isPersonal) ? 'none' : '';
+}
+async function submitQuickEvent() {
+  const type = document.getElementById('qEvType').value;
+  const ev = {
+    OwnerID: CURRENT_OWNER, EventDate: calSelectedDate, Type: type,
+    Memo: document.getElementById('qMemo').value,
+    IsImportant: document.getElementById('qImportant').checked,
+    SwapDirection: type === '대근' ? document.getElementById('qSwapType').value : '',
+    CounterpartName: '', LeaveCodeID: type !== '대근' && type !== '개인일정' ? document.getElementById('qLeaveCode').value : '',
+    EventHours: '', EventAmount: ''
+  };
+  const res = await api('addEvent', [ev]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  closeSheet();
+  fetchCalendar();
+}
+
+/* ================= 급여예측 ================= */
+async function loadPayroll() {
+  const el = document.getElementById('view-payroll');
+  if (!PROFILES.length) { const r = await api('listProfiles'); if (r.success) PROFILES = r.data; }
+  el.innerHTML = '<div class="pillTabs" id="payrollPills"></div><div id="payrollContent" class="muted" style="padding:20px 0;">불러오는 중...</div>';
+  document.getElementById('payrollPills').innerHTML = PROFILES.map(p =>
+    '<button class="pill' + (p.ProfileID === CURRENT_OWNER ? ' active' : '') + '" onclick="switchPayrollOwner(\'' + p.ProfileID + '\')">' + p.Name + '</button>'
+  ).join('');
+  fetchPayroll();
+}
+function switchPayrollOwner(id) { CURRENT_OWNER = id; loadPayroll(); }
+async function fetchPayroll() {
+  const res = await api('getPayrollPageData', [CURRENT_OWNER, todayYm()]);
+  const box = document.getElementById('payrollContent');
+  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
+  const d = res.data;
+  if (d.needsInit) { box.innerHTML = '<div class="emptyState">이 사람의 급여 설정이 없어요.<br>웹앱(PC/브라우저)에서 먼저 초기 등록해주세요.</div>'; return; }
+  const est = d.estimate;
+  box.innerHTML =
+    '<div class="card"><div class="cardTitle">근무기간 ' + est.periodStart + ' ~ ' + est.periodEnd + ' → ' + est.payMonth + ' 지급</div>' +
+    est.lineItems.map(it => {
+      const neg = it.amount < 0;
+      return '<div class="rowLine"><span' + (neg ? ' style="color:var(--danger);"' : '') + '>' + it.label + '</span><span class="amt"' + (neg ? ' style="color:var(--danger);"' : '') + '>' + (neg ? '-' : '') + fmtWon(Math.abs(it.amount)) + '</span></div>';
+    }).join('') +
+    '<div class="rowLine" style="margin-top:6px;font-weight:800;"><span>실수령 추정</span><span class="amt">' + fmtWon(est.estimated) + '</span></div></div>' +
+    '<div class="card"><div class="cardTitle">실제 급여 확정</div>' +
+    '<div class="muted" style="margin-bottom:10px;">' + (d.confirmedSalary ? '이미 확정됨: ' + fmtWon(d.confirmedSalary.ConfirmedAmount) : '이번 달 아직 확정 안 함') + '</div>' +
+    '<div class="field"><label>실제 입금액</label><input id="payConfirmAmount" type="number"></div>' +
+    '<button class="btn btn-gold" onclick="submitPayrollConfirm()">확정 입력</button></div>' +
+    '<div class="muted" style="text-align:center;">자세한 항목 수정/추가는 PC 웹앱에서 해주세요.</div>';
+}
+async function submitPayrollConfirm() {
+  const amount = Number(document.getElementById('payConfirmAmount').value);
+  const dRes = await api('getPayrollPageData', [CURRENT_OWNER, todayYm()]);
+  const accountId = dRes.success ? dRes.data.defaultPayoutAccountId : '';
+  if (!accountId) { alert('먼저 PC 웹앱에서 기본 급여계좌를 지정해주세요.'); return; }
+  const res = await api('confirmSalary', [CURRENT_OWNER, todayYm(), amount, accountId]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  alert('확정 완료: ' + fmtWon(res.data.confirmed));
+  fetchPayroll();
+}
+
+/* ================= 가계부 ================= */
+async function loadLedger() {
+  const el = document.getElementById('view-ledger');
+  el.innerHTML =
+    '<div class="pillTabs"><button class="pill active" data-lt="exp" onclick="switchLtView(\'exp\')">지출</button>' +
+    '<button class="pill" data-lt="inc" onclick="switchLtView(\'inc\')">변동소득</button></div>' +
+    '<div id="ltExp"></div><div id="ltInc" style="display:none;"></div>';
+  const res = await api('getExpenseTabData', [todayYm(), 'all']);
+  if (!res.success) { document.getElementById('ltExp').innerHTML = '오류: ' + res.message; return; }
+  const d = res.data;
+  const accOpts = d.accounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
+  document.getElementById('ltExp').innerHTML =
+    '<div class="card"><div class="cardTitle">지출 입력</div>' +
+    '<div class="field"><label>계좌</label><select id="ltAccount">' + accOpts + '</select></div>' +
+    '<div class="field"><label>날짜</label><input id="ltDate" type="date" value="' + ymd(new Date()) + '"></div>' +
+    '<div class="field"><label>금액</label><input id="ltAmount" type="number"></div>' +
+    '<button class="btn btn-gold" onclick="submitLtExpense()">저장</button></div>' +
+    '<div class="card"><div class="cardTitle">최근 거래 (이번 달)</div><div id="ltTxnList">' +
+    (d.transactions.map(t => {
+      const sign = t.TxnType === '지출' ? '-' : '+'; const color = t.TxnType === '지출' ? 'var(--danger)' : 'var(--success)';
+      return '<div class="rowLine"><span>' + t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + '</span><span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + '</span></div>';
+    }).join('') || '<div class="emptyState">이번 달 거래 없음</div>') + '</div></div>';
+
+  const tagRes = await api('listIncomeTags');
+  const tagOpts = (tagRes.success ? tagRes.data.map(t => '<option value="' + t.TagID + '">' + t.Label + '</option>').join('') : '') + '<option value="__custom__">직접입력</option>';
+  document.getElementById('ltInc').innerHTML =
+    '<div class="card"><div class="cardTitle">변동소득 (대근/부업/보너스)</div>' +
+    '<div class="field"><label>입금 계좌</label><select id="viAccount">' + accOpts + '</select></div>' +
+    '<div class="field"><label>출처</label><select id="viSource" onchange="this.nextElementSibling.style.display=this.value===\'__custom__\'?\'\':\'none\'">' + tagOpts + '</select><input id="viCustom" placeholder="직접 입력" style="display:none;margin-top:6px;"></div>' +
+    '<div class="field"><label>날짜</label><input id="viDate" type="date" value="' + ymd(new Date()) + '"></div>' +
+    '<div class="field"><label>금액</label><input id="viAmount" type="number"></div>' +
+    '<div class="field"><label>메모(선택)</label><input id="viMemo"></div>' +
+    '<button class="btn btn-gold" onclick="submitLtIncome()">저장</button></div>';
+}
+function switchLtView(v) {
+  document.querySelectorAll('#view-ledger .pill').forEach(b => b.classList.toggle('active', b.dataset.lt === v));
+  document.getElementById('ltExp').style.display = v === 'exp' ? '' : 'none';
+  document.getElementById('ltInc').style.display = v === 'inc' ? '' : 'none';
+}
+async function submitLtExpense() {
+  const txn = { OwnerID: CURRENT_OWNER, AccountID: document.getElementById('ltAccount').value, CardID: '', CategoryID: '',
+    TxnDate: document.getElementById('ltDate').value, Amount: Number(document.getElementById('ltAmount').value), TxnType: '지출', Source: '수동', Status: 'confirmed' };
+  if (!txn.Amount) { alert('금액을 입력하세요.'); return; }
+  const res = await api('addTransaction', [txn]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  loadLedger();
+}
+async function submitLtIncome() {
+  const sel = document.getElementById('viSource');
+  const source = sel.value === '__custom__' ? document.getElementById('viCustom').value : sel.options[sel.selectedIndex].text;
+  const accountId = document.getElementById('viAccount').value;
+  const res = await api('addVariableIncome', [CURRENT_OWNER, Number(document.getElementById('viAmount').value), source, document.getElementById('viDate').value, accountId, document.getElementById('viMemo').value]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  alert('저장됐어요.');
+  loadLedger();
+}
+
+/* ================= 저축목표 ================= */
+async function loadSavings() {
+  const el = document.getElementById('view-savings');
+  el.innerHTML = '<div class="muted" style="padding:20px 0;">불러오는 중...</div>';
+  const res = await api('listSavingsGoals');
+  if (!res.success) { el.innerHTML = '오류: ' + res.message; return; }
+  el.innerHTML = '<div class="card"><div class="cardTitle">저축목표</div>' +
+    (res.data.map(g => {
+      const pct = Math.min(100, Math.round(g.Progress * 100));
+      return '<div style="margin-bottom:14px;"><div class="rowLine"><span>' + g.Name + '</span><span>' + pct + '%</span></div>' +
+        '<div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:var(--gold);"></div></div>' +
+        '<div class="muted">' + fmtWon(g.CurrentAmount) + ' / ' + fmtWon(g.TargetAmount) + '</div></div>';
+    }).join('') || '<div class="emptyState">등록된 목표 없음 — PC 웹앱에서 추가하세요</div>') + '</div>';
+}
+</script>
+</body>
+</html>
