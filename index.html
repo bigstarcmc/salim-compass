@@ -4,8 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1B2A4A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="살림나침반">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
 <title>살림나침반</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>">
+<link rel="icon" href="icon-192.png" type="image/png">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
 <style>
 :root{
@@ -94,6 +100,7 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .dayCell .badge{position:absolute; bottom:4px; right:4px; min-width:18px; height:18px; padding:0 4px; border-radius:9px;
   font-size:9px; font-weight:800; display:flex; align-items:center; justify-content:center; color:#fff;}
 .dayCell.today{outline:2px solid var(--ink);}
+.today{outline:2px solid var(--ink);}
 .bg-주{background:#FBF0D3;} .bg-야{background:#E6E9F5;} .bg-휴{background:#F5F3EC;}
 .b-주{background:var(--day); color:#4A3200;} .b-야{background:var(--night);} .b-휴{background:transparent; color:var(--danger); font-size:10px;}
 .b-휴가{background:#3BA36A;} .b-대근주간{background:#C026D3;} .b-대근야간{background:#581C87;}
@@ -203,13 +210,17 @@ function api(action, args = []) { return callApiRaw(CFG.url, CFG.key, action, ar
 
 function openOwnerPicker() {
   if (!PROFILES.length) return;
-  const names = PROFILES.map(p => p.Name).join(' / ');
-  const pick = prompt('누구로 볼까요? (' + names + ')', currentOwnerName());
-  const found = PROFILES.find(p => p.Name === pick);
-  if (found) { CURRENT_OWNER = found.ProfileID; CFG.ownerId = found.ProfileID; localStorage.setItem(CFG_KEY, JSON.stringify(CFG)); updateWhoBadge(); reloadCurrentView(); }
+  const html = '<div style="display:flex;gap:10px;padding:6px 0 10px;">' +
+    PROFILES.map(p => '<button class="pill' + (p.ProfileID === CURRENT_OWNER ? ' active' : '') + '" style="flex:1;padding:16px;font-size:15px;" onclick="pickOwner(\'' + p.ProfileID + '\')">' + p.Name + '</button>').join('') +
+    '</div>';
+  openSheet('누구로 볼까요?', html);
+}
+function pickOwner(id) {
+  CURRENT_OWNER = id; CFG.ownerId = id; localStorage.setItem(CFG_KEY, JSON.stringify(CFG));
+  updateWhoBadge(); closeSheet(); reloadCurrentView();
 }
 function currentOwnerName() { const p = PROFILES.find(p => p.ProfileID === CURRENT_OWNER); return p ? p.Name : ''; }
-function updateWhoBadge() { document.getElementById('whoBadge').innerText = currentOwnerName() + ' 님'; }
+function updateWhoBadge() { document.getElementById('whoBadge').innerText = currentOwnerName() + ' ▾'; }
 
 /* ================= 초기화 ================= */
 async function startApp() {
@@ -226,6 +237,10 @@ async function startApp() {
 
 if (CFG && CFG.url && CFG.key) { startApp(); }
 else { document.getElementById('setupOverlay').style.display = 'flex'; }
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
 
 /* ================= 공통 유틸 ================= */
 function fmtWon(n) { return Math.round(Number(n) || 0).toLocaleString('ko-KR') + '원'; }
@@ -305,10 +320,12 @@ const WD = ['일', '월', '화', '수', '목', '금', '토'];
 function loadCalendar() {
   const el = document.getElementById('view-calendar');
   el.innerHTML =
+    '<div id="payrollTicker" class="myTeamChip" style="background:var(--gold-soft);"></div>' +
     '<div id="myTeamBox"></div>' +
     '<div class="card"><div class="calHead"><button onclick="calShift(-1)">◀</button><span class="ym" id="calYm"></span><button onclick="calShift(1)">▶</button></div>' +
-    '<div class="weekRow">' + WD.map(w => '<div>' + w + '</div>').join('') + '</div>' +
-    '<div class="dayGrid" id="calGrid"></div></div>';
+    '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);margin-bottom:10px;"><input type="checkbox" id="calAllTeams" onchange="fetchCalendar()"> 4개조 전체 보기</label>' +
+    '<div id="calSingleView"><div class="weekRow">' + WD.map(w => '<div>' + w + '</div>').join('') + '</div><div class="dayGrid" id="calGrid"></div></div>' +
+    '<div id="calAllTeamsView" style="display:none;"></div></div>';
   fetchCalendar();
 }
 function calShift(n) { calDate.setMonth(calDate.getMonth() + n); fetchCalendar(); }
@@ -316,11 +333,43 @@ function calYm() { return calDate.getFullYear() + '-' + String(calDate.getMonth(
 
 async function fetchCalendar() {
   document.getElementById('calYm').innerText = calYm();
-  const res = await api('getCalendarView', [CURRENT_OWNER, calYm(), false]);
+  const allTeams = document.getElementById('calAllTeams').checked;
+  document.getElementById('calSingleView').style.display = allTeams ? 'none' : '';
+  document.getElementById('calAllTeamsView').style.display = allTeams ? '' : 'none';
+  const res = await api('getCalendarView', [CURRENT_OWNER, calYm(), allTeams]);
   if (!res.success) { document.getElementById('calGrid').innerText = '오류: ' + res.message; return; }
   const d = res.data;
   document.getElementById('myTeamBox').innerHTML = '<div class="myTeamChip">🧭 내 조: ' + (d.currentTeam || '미설정') + '</div>';
-  renderCalGrid(d.shifts, d.events);
+  document.getElementById('payrollTicker').innerHTML = (d.payrollEstimate !== null && d.payrollEstimate !== undefined)
+    ? '💰 이번 달 실시간 예상 월급 &nbsp;<b>' + fmtWon(d.payrollEstimate) + '</b>' : '';
+  if (allTeams) renderAllTeamsView(d.shifts); else renderCalGrid(d.shifts, d.events);
+}
+function renderAllTeamsView(shiftsByTeam) {
+  const teams = ['A', 'B', 'C', 'D'];
+  const dates = Object.keys(shiftsByTeam['A']).sort();
+  const lead = new Date(dates[0]).getDay();
+  const cells = Array(lead).fill(null).concat(dates);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) { const w = cells.slice(i, i + 7); while (w.length < 7) w.push(null); weeks.push(w); }
+  const today = todayStr();
+  let html = '';
+  weeks.forEach(week => {
+    html += '<div style="display:grid;grid-template-columns:28px repeat(7,1fr);gap:2px;margin-bottom:2px;">';
+    html += '<div></div>' + week.map(d => '<div style="text-align:center;font-size:9px;color:var(--ink-mute);">' + (d ? Number(d.split('-')[2]) : '') + '</div>').join('');
+    html += '</div>';
+    teams.forEach(t => {
+      html += '<div style="display:grid;grid-template-columns:28px repeat(7,1fr);gap:2px;margin-bottom:3px;">';
+      html += '<div style="font-size:10px;font-weight:800;display:flex;align-items:center;">' + t + '조</div>';
+      html += week.map(d => {
+        if (!d) return '<div></div>';
+        const type = shiftsByTeam[t][d];
+        return '<div style="height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;" class="b-' + type + (d === today ? ' today' : '') + '">' + type + '</div>';
+      }).join('');
+      html += '</div>';
+    });
+    html += '<div style="height:1px;background:var(--border);margin:6px 0;"></div>';
+  });
+  document.getElementById('calAllTeamsView').innerHTML = html;
 }
 function todayStr() { const t = new Date(); return ymd(t); }
 function renderCalGrid(shifts, events) {
@@ -353,19 +402,31 @@ function renderCalGrid(shifts, events) {
 async function openDaySheet(dateStr) {
   calSelectedDate = dateStr;
   openSheet(dateStr, '<div class="muted">불러오는 중...</div>');
-  const res = await api('getDateDetail', [dateStr]);
+  await refreshDaySheet();
+}
+async function refreshDaySheet() {
+  const res = await api('getDateDetail', [calSelectedDate]);
   if (!res.success) return;
   let html = '<div class="cardTitle" style="margin-top:6px;">일정</div>';
   html += res.data.events.map(e => '<div class="rowLine"><span>' + e.Type + (e.Memo ? ' - ' + e.Memo : '') + '</span></div>').join('') || '<div class="emptyState">일정 없음</div>';
   html += '<div class="cardTitle" style="margin-top:14px;">일지</div>';
-  html += res.data.journal.map(j => '<div class="rowLine"><span>' + (j.Title || '(제목없음)') + '</span></div>').join('') || '<div class="emptyState">일지 없음</div>';
-  html += '<div style="margin-top:16px;"><button class="btn btn-gold" onclick="showAddEventForm()">＋ 일정 추가</button></div>';
-  html += '<div id="addEventFormBox"></div>';
+  html += res.data.journal.map(j => '<div class="rowLine"><span>[' + j.EntryType + '] ' + (j.Title || '(제목없음)') + '</span></div>').join('') || '<div class="emptyState">일지 없음</div>';
+  html += '<div class="segTabs" style="margin-top:16px;">' +
+    '<button class="segBtn active" data-add="event" onclick="switchAddSeg(\'event\')">일정</button>' +
+    '<button class="segBtn" data-add="worklog" onclick="switchAddSeg(\'worklog\')">작업일지</button>' +
+    '<button class="segBtn" data-add="diary" onclick="switchAddSeg(\'diary\')">일기</button></div>' +
+    '<div id="addFormBox"></div>';
   document.getElementById('sheetBody').innerHTML = html;
+  switchAddSeg('event');
+}
+function switchAddSeg(type) {
+  document.querySelectorAll('.segBtn').forEach(b => b.classList.toggle('active', b.dataset.add === type));
+  if (type === 'event') showAddEventForm();
+  else showAddJournalForm(type);
 }
 
 async function showAddEventForm() {
-  const box = document.getElementById('addEventFormBox');
+  const box = document.getElementById('addFormBox');
   box.innerHTML =
     '<div class="field"><label>유형</label><select id="qEvType" onchange="qToggleFields()"><option>휴가</option><option>대근</option><option>건강검진</option><option>교육</option><option>개인일정</option></select></div>' +
     '<div class="field" id="qLeaveRow"><label>휴가코드</label><select id="qLeaveCode"><option value="">선택안함</option></select></div>' +
@@ -379,6 +440,25 @@ async function showAddEventForm() {
     res.data.forEach(c => { const o = document.createElement('option'); o.value = c.CodeID; o.text = c.Name; sel.appendChild(o); });
   }
   qToggleFields();
+}
+function showAddJournalForm(type) {
+  const entryType = type === 'worklog' ? '작업일지' : '개인일기';
+  const box = document.getElementById('addFormBox');
+  box.innerHTML =
+    '<div class="field"><label>제목</label><input id="qJTitle" placeholder="' + (type === 'worklog' ? '예: 3호기 정비' : '오늘 있었던 일 간단히') + '"></div>' +
+    '<div class="field"><label>내용</label><input id="qJContent"></div>' +
+    '<div class="field"><label><input type="checkbox" id="qJImportant"> 중요일정</label></div>' +
+    '<button class="btn btn-gold" onclick="submitQuickJournal(\'' + entryType + '\')">저장</button>';
+}
+async function submitQuickJournal(entryType) {
+  const entry = {
+    OwnerID: CURRENT_OWNER, EntryDate: calSelectedDate, EntryType: entryType,
+    Title: document.getElementById('qJTitle').value, Content: document.getElementById('qJContent').value,
+    EquipmentTag: '', ImagePaths: '[]', IsImportant: document.getElementById('qJImportant').checked
+  };
+  const res = await api('addJournalEntry', [entry]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  refreshDaySheet();
 }
 function qToggleFields() {
   const isSwap = document.getElementById('qEvType').value === '대근';
@@ -398,7 +478,7 @@ async function submitQuickEvent() {
   };
   const res = await api('addEvent', [ev]);
   if (!res.success) { alert('저장 실패: ' + res.message); return; }
-  closeSheet();
+  refreshDaySheet();
   fetchCalendar();
 }
 
