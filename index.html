@@ -823,6 +823,14 @@ async function submitPayrollConfirm(ownerId) {
 }
 
 /* ================= 가계부 ================= */
+/* 가계부 화면: cache-first + "폼은 딱 1번만 그림".
+ * 캐시(또는 최초 응답)로 폼(입력창)을 한 번 그린 뒤에는, 그 뒤에 도착하는 백그라운드
+ * 최신 데이터로 절대 폼을 다시 그리지 않는다 — 목록(#ltTxnList, #transferListM)만
+ * 갱신한다. 그래야 사용자가 금액을 입력하는 도중에 백그라운드 새로고침이 끝나도
+ * 입력하던 값이 사라지지 않는다. (반대로 거래추가 성공 직후의 loadLedger() 호출은
+ * 쓰기 액션이 이미 캐시를 비워놨기 때문에 항상 캐시 없이 새로 폼까지 다시 그린다 —
+ * 이건 원래부터 그랬던 동작이라 새로 생기는 리스크가 아니다.)
+ */
 async function loadLedger() {
   const el = document.getElementById('view-ledger');
   el.innerHTML =
@@ -831,12 +839,46 @@ async function loadLedger() {
     '<button class="pill" data-lt="transfer" onclick="switchLtView(\'transfer\')">이체</button>' +
     '<button class="pill" data-lt="inc" onclick="switchLtView(\'inc\')">변동소득</button>' +
     '<button class="pill" data-lt="budget" onclick="switchLtView(\'budget\')">지출목표</button></div>' +
-    '<div id="ltExp"></div><div id="ltTransfer" style="display:none;"></div><div id="ltInc" style="display:none;"></div><div id="ltBudget" style="display:none;"></div>';
+    '<div id="ltExp"><div class="muted" style="padding:20px 0;">불러오는 중...</div></div>' +
+    '<div id="ltTransfer" style="display:none;"></div><div id="ltInc" style="display:none;"></div><div id="ltBudget" style="display:none;"></div>';
   const ownerFilter = SCOPE === 'shared' ? 'all' : SCOPE;
-  const res = await api('getExpenseTabData', [todayYm(), ownerFilter]);
-  if (!res.success) { document.getElementById('ltExp').innerHTML = '오류: ' + res.message; return; }
-  const d = res.data;
-  LT_CATEGORIES = d.categories;
+  const args = [todayYm(), ownerFilter];
+
+  let shellBuilt = false;
+  const cached = peekApiCache('getExpenseTabData', args);
+  if (cached) { await renderLtShell(cached); shellBuilt = true; }
+
+  const res = await api('getExpenseTabData', args);
+  if (!res.success) { if (!shellBuilt) document.getElementById('ltExp').innerHTML = '오류: ' + res.message; return; }
+  if (!shellBuilt) {
+    await renderLtShell(res.data);
+  } else {
+    // 폼은 이미 캐시로 그려놨으니 다시 안 그리고, 목록만 실제 최신값으로 조용히 갱신.
+    updateLtTxnList(res.data.transactions);
+    updateLtTransferList(res.data.transactions);
+  }
+}
+
+function txnRowHtml(t) {
+  const sign = t.TxnType === '지출' ? '-' : '+'; const color = t.TxnType === '지출' ? 'var(--danger)' : 'var(--success)';
+  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + '><span>' + t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') + (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' <span class="muted">(' + t.Memo + ')</span>' : '') + '</span><span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + (t._pending ? ' <span class="muted">저장 중…</span>' : '') + '</span></div>';
+}
+function transferRowHtml(t) {
+  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + '><span>' + t.TxnDate + ' · ' + t.FromAccountName + ' → ' + t.ToAccountName + (t._pending ? ' <span class="muted">저장 중…</span>' : '') + '</span><span class="amt">' + fmtWon(t.Amount) + '</span></div>';
+}
+function updateLtTxnList(transactions) {
+  const list = document.getElementById('ltTxnList');
+  if (!list) return;
+  list.innerHTML = transactions.filter(t => t.TxnType === '지출' || t.TxnType === '수입').map(txnRowHtml).join('') || '<div class="emptyState">이번 달 거래 없음</div>';
+}
+function updateLtTransferList(transactions) {
+  const list = document.getElementById('transferListM');
+  if (!list) return;
+  list.innerHTML = transactions.filter(t => t.TxnType === '이체').map(transferRowHtml).join('') || '<div class="emptyState">이번 달 이체 없음</div>';
+}
+
+async function renderLtShell(d) {
+  LT_CATEGORIES = d.categories; LT_ACCOUNTS = d.accounts; LT_CARDS = d.cards;
   const accOpts = d.accounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
   const cardOpts = d.cards.map(c => '<option value="' + c.CardID + '">' + c.CardName + '</option>').join('');
   const groupNames = [...new Set(d.categories.map(c => c.GroupName))];
@@ -853,10 +895,7 @@ async function loadLedger() {
     '<div class="field"><label>메모(선택, 어디에 썼는지)</label><input id="ltMemo" placeholder="예: 이마트 장보기"></div>' +
     '<button class="btn btn-gold" onclick="submitLtExpense()">저장</button></div>' +
     '<div class="card"><div class="cardTitle">최근 거래 (이번 달' + (SCOPE !== 'shared' ? ' · ' + profileName(SCOPE) : '') + ')</div><div id="ltTxnList">' +
-    (d.transactions.filter(t => t.TxnType === '지출' || t.TxnType === '수입').map(t => {
-      const sign = t.TxnType === '지출' ? '-' : '+'; const color = t.TxnType === '지출' ? 'var(--danger)' : 'var(--success)';
-      return '<div class="rowLine"><span>' + t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') + (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' <span class="muted">(' + t.Memo + ')</span>' : '') + '</span><span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + '</span></div>';
-    }).join('') || '<div class="emptyState">이번 달 거래 없음</div>') + '</div></div>';
+    (d.transactions.filter(t => t.TxnType === '지출' || t.TxnType === '수입').map(txnRowHtml).join('') || '<div class="emptyState">이번 달 거래 없음</div>') + '</div></div>';
   toggleLtPayMethod();
 
   document.getElementById('ltTransfer').innerHTML =
@@ -869,9 +908,7 @@ async function loadLedger() {
     '<div class="field"><label>메모(선택)</label><input id="trMemo"></div>' +
     '<button class="btn btn-gold" onclick="submitTransferM()">이체</button></div>' +
     '<div class="card"><div class="cardTitle">이번 달 이체 내역</div><div id="transferListM">' +
-    (d.transactions.filter(t => t.TxnType === '이체').map(t =>
-      '<div class="rowLine"><span>' + t.TxnDate + ' · ' + t.FromAccountName + ' → ' + t.ToAccountName + '</span><span class="amt">' + fmtWon(t.Amount) + '</span></div>'
-    ).join('') || '<div class="emptyState">이번 달 이체 없음</div>') + '</div></div>';
+    (d.transactions.filter(t => t.TxnType === '이체').map(transferRowHtml).join('') || '<div class="emptyState">이번 달 이체 없음</div>') + '</div></div>';
 
   const tagRes = await api('listIncomeTags');
   const tagOpts = (tagRes.success ? tagRes.data.map(t => '<option value="' + t.TagID + '">' + t.Label + '</option>').join('') : '') + '<option value="__custom__">직접입력</option>';
@@ -889,6 +926,8 @@ async function loadLedger() {
 }
 function profileName(id) { const p = PROFILES.find(x => x.ProfileID === id); return p ? p.Name : ''; }
 let LT_CATEGORIES = [];
+let LT_ACCOUNTS = [];
+let LT_CARDS = [];
 function onLtCatGroupChange() {
   const group = document.getElementById('ltCatGroup').value;
   const items = LT_CATEGORIES.filter(c => c.GroupName === group);
@@ -906,12 +945,34 @@ function switchLtView(v) {
   document.getElementById('ltInc').style.display = v === 'inc' ? '' : 'none';
   document.getElementById('ltBudget').style.display = v === 'budget' ? '' : 'none';
 }
+/* 아래 3개 submit 함수는 전부 "낙관적 UI" 패턴: 서버 응답을 기다리지 않고
+ * 방금 입력한 내용을 해당 목록에 즉시 반영(회색으로 "저장 중…" 표시)한 다음 폼을
+ * 비운다. 서버가 성공을 돌려주면 loadLedger()로 조용히 실제 값과 동기화하고,
+ * 실패를 돌려주면 방금 넣었던 임시 항목을 제거하고 에러를 알린다. */
 async function submitTransferM() {
   const fromId = document.getElementById('trFromAccount').value;
   const toId = document.getElementById('trToAccount').value;
   if (fromId === toId) { alert('출금/입금 계좌가 같아요.'); return; }
-  const res = await api('createTransfer', [SCOPE !== 'shared' ? SCOPE : primaryOwnerId(), fromId, toId, Number(document.getElementById('trAmount').value), document.getElementById('trDate').value, document.getElementById('trMemo').value]);
-  if (!res.success) { alert('이체 실패: ' + res.message); return; }
+  const amount = Number(document.getElementById('trAmount').value);
+  const date = document.getElementById('trDate').value;
+  const memo = document.getElementById('trMemo').value;
+
+  const list = document.getElementById('transferListM');
+  const tempId = 'pendingtr-' + Date.now();
+  if (list) {
+    const empty = list.querySelector('.emptyState'); if (empty) empty.remove();
+    const fromAcc = LT_ACCOUNTS.find(a => a.AccountID === fromId);
+    const toAcc = LT_ACCOUNTS.find(a => a.AccountID === toId);
+    list.insertAdjacentHTML('afterbegin', '<div id="' + tempId + '">' + transferRowHtml({ _pending: true, TxnDate: date, Amount: amount, FromAccountName: fromAcc ? fromAcc.Name : '', ToAccountName: toAcc ? toAcc.Name : '' }) + '</div>');
+  }
+  document.getElementById('trAmount').value = ''; document.getElementById('trMemo').value = '';
+
+  const res = await api('createTransfer', [SCOPE !== 'shared' ? SCOPE : primaryOwnerId(), fromId, toId, amount, date, memo]);
+  if (!res.success) {
+    const el = document.getElementById(tempId); if (el) el.remove();
+    alert('이체 실패: ' + res.message);
+    return;
+  }
   loadLedger();
 }
 async function submitLtExpense() {
@@ -925,17 +986,51 @@ async function submitLtExpense() {
     TxnDate: document.getElementById('ltDate').value, Amount: Number(document.getElementById('ltAmount').value), TxnType: '지출', Source: '수동', Status: 'confirmed'
   };
   if (!txn.Amount) { alert('금액을 입력하세요.'); return; }
+
+  const list = document.getElementById('ltTxnList');
+  const tempId = 'pendingtxn-' + Date.now();
+  if (list) {
+    const empty = list.querySelector('.emptyState'); if (empty) empty.remove();
+    const cat = LT_CATEGORIES.find(c => c.CategoryID === txn.CategoryID);
+    const acc = byCard ? LT_CARDS.find(c => c.CardID === txn.CardID) : LT_ACCOUNTS.find(a => a.AccountID === txn.AccountID);
+    list.insertAdjacentHTML('afterbegin', '<div id="' + tempId + '">' + txnRowHtml(Object.assign({ _pending: true }, txn, {
+      AccountName: acc ? (byCard ? acc.AccountName : acc.Name) : '',
+      CategoryName: cat ? cat.Name : ''
+    })) + '</div>');
+  }
+  document.getElementById('ltAmount').value = ''; document.getElementById('ltMemo').value = '';
+
   const res = await api('addTransaction', [txn]);
-  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  if (!res.success) {
+    const el = document.getElementById(tempId); if (el) el.remove();
+    alert('저장 실패: ' + res.message);
+    return;
+  }
   loadLedger();
 }
 async function submitLtIncome() {
   const sel = document.getElementById('viSource');
   const source = sel.value === '__custom__' ? document.getElementById('viCustom').value : sel.options[sel.selectedIndex].text;
   const accountId = document.getElementById('viAccount').value;
-  const res = await api('addVariableIncome', [document.getElementById('viOwner').value, Number(document.getElementById('viAmount').value), source, document.getElementById('viDate').value, accountId, document.getElementById('viMemo').value]);
-  if (!res.success) { alert('저장 실패: ' + res.message); return; }
-  alert('저장됐어요.');
+  const amount = Number(document.getElementById('viAmount').value);
+  const date = document.getElementById('viDate').value;
+  const memo = document.getElementById('viMemo').value;
+
+  const list = document.getElementById('ltTxnList');
+  const tempId = 'pendingtxn-' + Date.now();
+  if (list) {
+    const empty = list.querySelector('.emptyState'); if (empty) empty.remove();
+    const acc = LT_ACCOUNTS.find(a => a.AccountID === accountId);
+    list.insertAdjacentHTML('afterbegin', '<div id="' + tempId + '">' + txnRowHtml({ _pending: true, TxnDate: date, TxnType: '수입', Amount: amount, Source: source, Memo: memo, AccountName: acc ? acc.Name : '', CategoryName: '' }) + '</div>');
+  }
+  document.getElementById('viAmount').value = ''; document.getElementById('viMemo').value = '';
+
+  const res = await api('addVariableIncome', [document.getElementById('viOwner').value, amount, source, date, accountId, memo]);
+  if (!res.success) {
+    const el = document.getElementById(tempId); if (el) el.remove();
+    alert('저장 실패: ' + res.message);
+    return;
+  }
   loadLedger();
 }
 
@@ -959,12 +1054,20 @@ function loadBudgetPanel(groupNames, categories) {
   fetchBudgetStatus();
 }
 async function fetchBudgetStatus() {
-  const res = await api('getBudgetStatus', [todayYm()]);
+  // #bgList는 읽기전용 목록이라(입력폼 아님) cache-first를 걱정 없이 통으로 적용해도 안전함.
+  const args = [todayYm()];
+  const cached = peekApiCache('getBudgetStatus', args);
+  if (cached) renderBudgetListHtml(cached);
+  const res = await api('getBudgetStatus', args);
+  if (!res.success) { if (!cached) document.getElementById('bgList').innerText = '오류: ' + res.message; return; }
+  renderBudgetListHtml(res.data);
+}
+function renderBudgetListHtml(data) {
   const box = document.getElementById('bgList');
-  if (!res.success) { box.innerText = '오류: ' + res.message; return; }
+  if (!box) return;
   const colorMap = { good: 'var(--success)', warn: '#c98a16', danger: 'var(--danger)' };
   const msgMap = { good: '👍 여유있어요', warn: '⚠️ 한도에 가까워지고 있어요', danger: '🚨 한도 초과!' };
-  box.innerHTML = res.data.map(b => {
+  box.innerHTML = data.map(b => {
     const pct = Math.min(100, Math.round(b.Pct * 100));
     const ownerLabel = b.OwnerID === 'shared' ? '공동' : profileName(b.OwnerID);
     return '<div style="margin-bottom:14px;"><div class="rowLine"><span>' + b.Label + ' <span class="muted">(' + ownerLabel + ')</span></span><button class="btn-sm btn-danger" onclick="deleteBudgetM(\'' + b.BudgetID + '\')">삭제</button></div>' +
@@ -1025,12 +1128,18 @@ function renderSettingsSub() {
 
 async function renderSettingsAccounts() {
   const box = document.getElementById('settingsBody');
-  box.innerHTML = '<div class="muted">불러오는 중...</div>';
+  const cached = peekApiCache('listAccounts', []);
+  if (cached) renderSettingsAccountsHtml(cached);
+  else box.innerHTML = '<div class="muted">불러오는 중...</div>';
   const res = await api('listAccounts');
-  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
-  SETTINGS_ACCOUNTS_CACHE = res.data;
+  if (!res.success) { if (!cached) box.innerHTML = '오류: ' + res.message; return; }
+  renderSettingsAccountsHtml(res.data);
+}
+function renderSettingsAccountsHtml(data) {
+  const box = document.getElementById('settingsBody');
+  SETTINGS_ACCOUNTS_CACHE = data;
   box.innerHTML = '<div class="card"><div class="cardTitle">계좌 목록</div><div id="acctListBody">' +
-    res.data.map(a => '<div id="macc-' + a.AccountID + '"><div class="rowLine"><span>' + a.Name + ' <span class="muted">(' + (profileName(a.OwnerID) || '공동') + (String(a.IsLiability) === 'true' ? ', 부채' : '') + ')</span></span><span class="amt">' + fmtWon(a.CurrentBalance) + ' <button class="btn-sm btn-ghost" onclick="editAccountM(\'' + a.AccountID + '\')">수정</button> <button class="btn-sm btn-danger" onclick="delAccount(\'' + a.AccountID + '\')">삭제</button></span></div></div>').join('') +
+    data.map(a => '<div id="macc-' + a.AccountID + '"><div class="rowLine"><span>' + a.Name + ' <span class="muted">(' + (profileName(a.OwnerID) || '공동') + (String(a.IsLiability) === 'true' ? ', 부채' : '') + ')</span></span><span class="amt">' + fmtWon(a.CurrentBalance) + ' <button class="btn-sm btn-ghost" onclick="editAccountM(\'' + a.AccountID + '\')">수정</button> <button class="btn-sm btn-danger" onclick="delAccount(\'' + a.AccountID + '\')">삭제</button></span></div></div>').join('') +
     '</div></div><div class="card"><div class="cardTitle">계좌 추가</div>' +
     '<div class="field"><label>이름</label><input id="newAccName"></div>' +
     '<div class="field"><label>소유자</label><select id="newAccOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '">' + p.Name + '</option>').join('') + '<option value="shared">공동</option></select></div>' +
@@ -1075,12 +1184,20 @@ async function delAccount(id) {
 
 async function renderSettingsCards() {
   const box = document.getElementById('settingsBody');
-  box.innerHTML = '<div class="muted">불러오는 중...</div>';
+  const cCards = peekApiCache('listCards', []);
+  const cAccs = peekApiCache('listAccounts', []);
+  const cPending = peekApiCache('getCardPendingSummary', []);
+  if (cCards && cAccs && cPending) renderSettingsCardsHtml(cCards, cAccs, cPending);
+  else box.innerHTML = '<div class="muted">불러오는 중...</div>';
   const [cardRes, accRes, pendingRes] = await Promise.all([api('listCards'), api('listAccounts'), api('getCardPendingSummary')]);
-  if (!cardRes.success) { box.innerHTML = '오류: ' + cardRes.message; return; }
-  const accOpts = (accRes.data || []).map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
+  if (!cardRes.success) { if (!(cCards && cAccs && cPending)) box.innerHTML = '오류: ' + cardRes.message; return; }
+  renderSettingsCardsHtml(cardRes.data, accRes.data || [], pendingRes.success ? pendingRes.data : []);
+}
+function renderSettingsCardsHtml(cards, accounts, pending) {
+  const box = document.getElementById('settingsBody');
+  const accOpts = accounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
   box.innerHTML = '<div class="card"><div class="cardTitle">카드 목록</div>' +
-    cardRes.data.map(c => '<div class="rowLine"><span>' + c.CardName + ' (' + c.CardType + (c.BillingDay ? ', 매달 ' + c.BillingDay + '일' : '') + ')</span><span class="muted">' + c.AccountName + '</span></div>').join('') +
+    cards.map(c => '<div class="rowLine"><span>' + c.CardName + ' (' + c.CardType + (c.BillingDay ? ', 매달 ' + c.BillingDay + '일' : '') + ')</span><span class="muted">' + c.AccountName + '</span></div>').join('') +
     '</div><div class="card"><div class="cardTitle">카드 추가</div>' +
     '<div class="field"><label>이름</label><input id="newCardName"></div>' +
     '<div class="field"><label>유형</label><select id="newCardType" onchange="onCardTypeChangeM()"><option>체크</option><option>신용</option></select></div>' +
@@ -1090,10 +1207,10 @@ async function renderSettingsCards() {
     '<div class="muted" style="margin:6px 0;">신용카드는 쓴 즉시 지출로 기록되지만, 계좌 잔액은 정산할 때까지 안 줄어들어요.</div>' +
     '<button class="btn btn-gold" onclick="addCardM()">저장</button></div>' +
     '<div class="card"><div class="cardTitle">카드 정산 (신용카드 미결제분)</div>' +
-    (pendingRes.success ? pendingRes.data.map(c =>
+    (pending.map(c =>
       '<div class="rowLine"><span>' + c.CardName + ' <span class="muted">(정산대기 ' + c.Count + '건)</span></span><span class="amt">' + fmtWon(c.Total) +
       (c.Total > 0 ? ' <button class="btn-sm btn-ghost" onclick="settleCardM(\'' + c.CardID + '\')">정산</button>' : '') + '</span></div>'
-    ).join('') || '<div class="emptyState">신용카드 없음</div>' : '') + '</div>';
+    ).join('') || '<div class="emptyState">신용카드 없음</div>') + '</div>';
 }
 function onCardTypeChangeM() {
   document.getElementById('newCardBillingRow').style.display = document.getElementById('newCardType').value === '신용' ? '' : 'none';
@@ -1116,11 +1233,17 @@ async function addCardM() {
 
 async function renderSettingsCategories() {
   const box = document.getElementById('settingsBody');
-  box.innerHTML = '<div class="muted">불러오는 중...</div>';
+  const cached = peekApiCache('listCategories', []);
+  if (cached) renderSettingsCategoriesHtml(cached);
+  else box.innerHTML = '<div class="muted">불러오는 중...</div>';
   const res = await api('listCategories');
-  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
+  if (!res.success) { if (!cached) box.innerHTML = '오류: ' + res.message; return; }
+  renderSettingsCategoriesHtml(res.data);
+}
+function renderSettingsCategoriesHtml(data) {
+  const box = document.getElementById('settingsBody');
   const grouped = {};
-  res.data.forEach(c => { (grouped[c.GroupName] = grouped[c.GroupName] || []).push(c); });
+  data.forEach(c => { (grouped[c.GroupName] = grouped[c.GroupName] || []).push(c); });
   box.innerHTML = '<div class="card"><div class="cardTitle">카테고리 목록</div>' +
     Object.keys(grouped).map(g => '<div class="muted" style="margin-top:8px;">' + g + '</div>' +
       grouped[g].map(c => '<div class="rowLine"><span>' + c.Name + '</span><button class="btn-sm btn-danger" onclick="delCategory(\'' + c.CategoryID + '\')">삭제</button></div>').join('')).join('') +
@@ -1143,11 +1266,17 @@ async function delCategory(id) {
 
 async function renderSettingsLeaveCodes() {
   const box = document.getElementById('settingsBody');
-  box.innerHTML = '<div class="muted">불러오는 중...</div>';
+  const cached = peekApiCache('listLeaveCodes', []);
+  if (cached) renderSettingsLeaveCodesHtml(cached);
+  else box.innerHTML = '<div class="muted">불러오는 중...</div>';
   const res = await api('listLeaveCodes');
-  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
+  if (!res.success) { if (!cached) box.innerHTML = '오류: ' + res.message; return; }
+  renderSettingsLeaveCodesHtml(res.data);
+}
+function renderSettingsLeaveCodesHtml(data) {
+  const box = document.getElementById('settingsBody');
   box.innerHTML = '<div class="card"><div class="cardTitle">휴가코드 목록</div>' +
-    res.data.map(c => '<div class="rowLine"><span>' + c.Code + ' · ' + c.Name + ' <span class="muted">(' + c.HoursCredit + '시간' + (String(c.PayOnWorkday) === 'true' ? ', 근무일반영' : '') + ')</span></span><button class="btn-sm btn-danger" onclick="delLeaveCode(\'' + c.CodeID + '\')">삭제</button></div>').join('') +
+    data.map(c => '<div class="rowLine"><span>' + c.Code + ' · ' + c.Name + ' <span class="muted">(' + c.HoursCredit + '시간' + (String(c.PayOnWorkday) === 'true' ? ', 근무일반영' : '') + ')</span></span><button class="btn-sm btn-danger" onclick="delLeaveCode(\'' + c.CodeID + '\')">삭제</button></div>').join('') +
     '</div><div class="card"><div class="cardTitle">휴가코드 추가</div>' +
     '<div class="field"><label>코드</label><input id="lcCode" placeholder="예: S"></div>' +
     '<div class="field"><label>이름</label><input id="lcName"></div>' +
@@ -1170,10 +1299,15 @@ async function delLeaveCode(id) {
 
 async function renderSettingsRecurring() {
   const box = document.getElementById('settingsBody');
-  box.innerHTML = '<div class="muted">불러오는 중...</div>';
+  const cached = peekApiCache('getRecurringTabData', []);
+  if (cached) renderSettingsRecurringHtml(cached);
+  else box.innerHTML = '<div class="muted">불러오는 중...</div>';
   const res = await api('getRecurringTabData');
-  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
-  const d = res.data;
+  if (!res.success) { if (!cached) box.innerHTML = '오류: ' + res.message; return; }
+  renderSettingsRecurringHtml(res.data);
+}
+function renderSettingsRecurringHtml(d) {
+  const box = document.getElementById('settingsBody');
   const accOpts = d.accounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
   const catOpts = d.categories.map(c => '<option value="' + c.CategoryID + '">' + c.GroupName + ' · ' + c.Name + '</option>').join('');
   box.innerHTML = '<div class="card"><div class="cardTitle">고정지출 목록</div>' +
