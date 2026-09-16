@@ -72,6 +72,17 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .rowLine{display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid #F4EFE3; font-size:14px;}
 .rowLine:last-child{border-bottom:none;}
 .rowLine .amt{font-weight:700; font-variant-numeric:tabular-nums;}
+/* 거래/이체 목록: 글자가 길어져도 절대 다음 줄로 안 넘어가고 한 줄 안에서 말줄임표(...)로
+ * 잘리게 한다. 아이콘·날짜는 맨 왼쪽에 작게 고정, 금액·수정아이콘은 맨 오른쪽에 고정폭으로
+ * 고정해서 글자 길이와 무관하게 항상 같은 자리에 있다. */
+.txnRowLine{display:flex; align-items:center; gap:6px; padding:10px 0; border-bottom:1px solid #F4EFE3; font-size:13px; cursor:pointer;}
+.txnRowLine:last-child{border-bottom:none;}
+.txnRowLine .txnIcon{flex:0 0 auto; font-size:14px; width:18px; text-align:center;}
+.txnRowLine .txnDate{flex:0 0 auto; font-size:10px; color:var(--ink-mute); width:32px; line-height:1.3;}
+.txnRowLine .txnText{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.txnRowLine .txnAmt{flex:0 0 auto; font-weight:700; font-variant-numeric:tabular-nums; margin-left:2px;}
+.txnRowLine .txnEdit{flex:0 0 auto; font-size:11px; opacity:.45; margin-left:1px;}
+.txnRowLine .txnPending{flex:0 0 auto; font-size:10px; margin-left:1px;}
 
 .pillTabs{display:flex; gap:6px; margin-bottom:14px; overflow-x:auto;}
 .pill{flex:0 0 auto; padding:8px 16px; border-radius:20px; border:1px solid var(--border); background:var(--surface);
@@ -494,13 +505,14 @@ async function loadSnapshotTrendM() {
   box.innerHTML = res.data.map(s => '<div class="rowLine"><span>' + s.Month + '</span><span class="amt">순자산 ' + fmtWon(s.NetWorth) + '</span></div>').join('') || '<div class="emptyState">아직 마감된 달 없음</div>';
 }
 
-// 접었다 펼 수 있는 카드. jumpView(있으면) → "자세히 보기"로 해당 탭 이동, jumpSub이면 그 탭 안의 서브탭까지 전환.
+// 접었다 펼 수 있는 카드. jumpView(있으면) 본문 맨 아래에 "자세히 보기" 링크를 따로 둔다 —
+// 예전엔 펼침/접힘 화살표 바로 옆에 있어서 접으려다 실수로 다른 화면으로 넘어가버리기 쉬웠음.
 function accordionCard(title, id, expanded, bodyHtml, jumpView, jumpSub) {
-  const jumpBtn = jumpView ? '<button class="btn-sm btn-ghost" onclick="event.stopPropagation();jumpTo(\'' + jumpView + '\'' + (jumpSub ? ",'" + jumpSub + "'" : '') + ')">자세히</button>' : '';
+  const jumpLink = jumpView ? '<div style="text-align:right;margin-top:10px;"><span style="font-size:12px;font-weight:700;color:var(--gold-deep);cursor:pointer;" onclick="jumpTo(\'' + jumpView + '\'' + (jumpSub ? ",'" + jumpSub + "'" : '') + ')">자세히 보기 →</span></div>' : '';
   return '<div class="card">' +
     '<div class="cardTitle" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleAccordion(\'' + id + '\')">' +
-    '<span>' + title + '</span><span style="display:flex;gap:6px;align-items:center;">' + jumpBtn + '<span id="' + id + '-arrow">' + (expanded ? '▾' : '▸') + '</span></span></div>' +
-    '<div id="' + id + '" style="display:' + (expanded ? '' : 'none') + ';">' + bodyHtml + '</div></div>';
+    '<span>' + title + '</span><span id="' + id + '-arrow" style="font-size:15px;color:var(--ink-mute);padding:8px 6px;margin:-8px -6px;">' + (expanded ? '▾' : '▸') + '</span></div>' +
+    '<div id="' + id + '" style="display:' + (expanded ? '' : 'none') + ';">' + bodyHtml + jumpLink + '</div></div>';
 }
 function toggleAccordion(id) {
   const box = document.getElementById(id);
@@ -678,31 +690,51 @@ async function openDaySheet(dateStr) {
 }
 let DAY_EVENTS_CACHE = [];
 let DAY_JOURNAL_CACHE = [];
+// 일정/일지 한 줄 렌더링을 따로 빼서, 낙관적 UI(추가 직후 즉시 반영)에서도 같은 모양으로 재사용.
+function dayEventRowHtml(e) {
+  const pending = !!e._pending;
+  return '<div class="itemRow"' + (pending ? ' style="opacity:.55;"' : '') + '><span>' +
+    '<span class="typeChip" style="background:' + (EV_COLOR[e.Type] || '#6B7280') + ';">' + e.Type + (e.Type === '대근' && e.SwapDirection ? '(' + e.SwapDirection + ')' : '') + '</span>' +
+    (eventLevel(e) === 'high' ? '🔴 ' : (eventLevel(e) === 'normal' ? '🟠 ' : '')) +
+    (e.Memo ? e.Memo : '<span class="muted">(메모 없음)</span>') +
+    (e.Location ? ' <span class="muted">📍' + e.Location + '</span>' : '') +
+    (profileName(e.OwnerID) ? ' <span class="muted">· ' + profileName(e.OwnerID) + '</span>' : '') +
+    (pending ? ' <span class="muted">저장 중…</span>' : '') + '</span>' +
+    (pending ? '' : '<span class="itemActions"><button class="btn-sm btn-ghost" onclick="editEventM(\'' + e.EventID + '\')">수정</button>' +
+    '<button class="btn-sm btn-danger" onclick="deleteEventM(\'' + e.EventID + '\')">삭제</button></span>') + '</div>';
+}
+function dayJournalRowHtml(j) {
+  const pending = !!j._pending;
+  return '<div class="itemRow"' + (pending ? ' style="opacity:.55;"' : '') + '><span>[' + j.EntryType + '] ' + (j.Title || '(제목없음)') + (pending ? ' <span class="muted">저장 중…</span>' : '') + '</span>' +
+    (pending ? '' : '<span class="itemActions"><button class="btn-sm btn-ghost" onclick="editJournalM(\'' + j.EntryID + '\')">수정</button>' +
+    '<button class="btn-sm btn-danger" onclick="deleteJournalM(\'' + j.EntryID + '\')">삭제</button></span>') + '</div>';
+}
+function renderDayEventsList() {
+  const el = document.getElementById('dayEventsList');
+  if (el) el.innerHTML = DAY_EVENTS_CACHE.map(dayEventRowHtml).join('') || '<div class="emptyState">일정 없음</div>';
+}
+function renderDayJournalList() {
+  const el = document.getElementById('dayJournalList');
+  if (el) el.innerHTML = DAY_JOURNAL_CACHE.map(dayJournalRowHtml).join('') || '<div class="emptyState">일지 없음</div>';
+}
 async function refreshDaySheet() {
   const res = await api('getDateDetail', [calSelectedDate]);
   if (!res.success) return;
   DAY_EVENTS_CACHE = res.data.events;
   DAY_JOURNAL_CACHE = res.data.journal;
-  let html = '<div class="cardTitle" style="margin-top:6px;">일정</div>';
   // 달력 칸에서 뺀 글자(메모·장소·작성자)는 전부 여기서 보여준다 — 날짜를 누르면 나오는 화면.
-  html += DAY_EVENTS_CACHE.map(e => '<div class="itemRow"><span>' +
-    '<span class="typeChip" style="background:' + (EV_COLOR[e.Type] || '#6B7280') + ';">' + e.Type + (e.Type === '대근' && e.SwapDirection ? '(' + e.SwapDirection + ')' : '') + '</span>' +
-    (eventLevel(e) === 'high' ? '🔴 ' : (eventLevel(e) === 'normal' ? '🟠 ' : '')) +
-    (e.Memo ? e.Memo : '<span class="muted">(메모 없음)</span>') +
-    (e.Location ? ' <span class="muted">📍' + e.Location + '</span>' : '') +
-    (profileName(e.OwnerID) ? ' <span class="muted">· ' + profileName(e.OwnerID) + '</span>' : '') + '</span>' +
-    '<span class="itemActions"><button class="btn-sm btn-ghost" onclick="editEventM(\'' + e.EventID + '\')">수정</button>' +
-    '<button class="btn-sm btn-danger" onclick="deleteEventM(\'' + e.EventID + '\')">삭제</button></span></div>').join('') || '<div class="emptyState">일정 없음</div>';
-  html += '<div class="cardTitle" style="margin-top:14px;">일지</div>';
-  html += DAY_JOURNAL_CACHE.map(j => '<div class="itemRow"><span>[' + j.EntryType + '] ' + (j.Title || '(제목없음)') + '</span>' +
-    '<span class="itemActions"><button class="btn-sm btn-ghost" onclick="editJournalM(\'' + j.EntryID + '\')">수정</button>' +
-    '<button class="btn-sm btn-danger" onclick="deleteJournalM(\'' + j.EntryID + '\')">삭제</button></span></div>').join('') || '<div class="emptyState">일지 없음</div>';
-  html += '<div class="segTabs" style="margin-top:16px;">' +
+  // 목록(dayEventsList/dayJournalList)을 add폼과 분리해뒀다 — 낙관적 UI로 목록만 다시 그릴 때
+  // 입력폼(addFormBox)까지 같이 리셋되지 않게 하기 위해서.
+  let html = '<div class="cardTitle" style="margin-top:6px;">일정</div><div id="dayEventsList"></div>' +
+    '<div class="cardTitle" style="margin-top:14px;">일지</div><div id="dayJournalList"></div>' +
+    '<div class="segTabs" style="margin-top:16px;">' +
     '<button class="segBtn active" data-add="event" onclick="switchAddSeg(\'event\')">일정</button>' +
     '<button class="segBtn" data-add="worklog" onclick="switchAddSeg(\'worklog\')">작업일지</button>' +
     '<button class="segBtn" data-add="diary" onclick="switchAddSeg(\'diary\')">일기</button></div>' +
     '<div id="addFormBox"></div>';
   document.getElementById('sheetBody').innerHTML = html;
+  renderDayEventsList();
+  renderDayJournalList();
   switchAddSeg('event');
 }
 async function deleteEventM(id) {
@@ -805,8 +837,17 @@ async function submitQuickJournal(entryType) {
     Title: document.getElementById('qJTitle').value, Content: document.getElementById('qJContent').value,
     EquipmentTag: '', ImagePaths: '[]', IsImportant: document.getElementById('qJImportant').checked
   };
+  // 낙관적 UI: 서버 응답을 기다리지 않고 목록에 바로 반영(살짝 반투명 + "저장 중…"). 실패하면 되돌림.
+  DAY_JOURNAL_CACHE = DAY_JOURNAL_CACHE.concat([Object.assign({ _pending: true }, entry)]);
+  renderDayJournalList();
+
   const res = await api('addJournalEntry', [entry]);
-  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  if (!res.success) {
+    DAY_JOURNAL_CACHE = DAY_JOURNAL_CACHE.filter(j => !j._pending);
+    renderDayJournalList();
+    alert('저장 실패: ' + res.message);
+    return;
+  }
   refreshDaySheet();
 }
 function qToggleFields() {
@@ -828,8 +869,17 @@ async function submitQuickEvent() {
     CounterpartName: '', LeaveCodeID: type !== '대근' && type !== '개인일정' ? document.getElementById('qLeaveCode').value : '',
     EventHours: '', EventAmount: ''
   };
+  // 낙관적 UI: 저장 결과를 기다리지 않고 "일정" 목록에 바로 반영. 실패하면 그 자리에서 되돌림.
+  DAY_EVENTS_CACHE = DAY_EVENTS_CACHE.concat([Object.assign({ _pending: true }, ev)]);
+  renderDayEventsList();
+
   const res = await api('addEvent', [ev]);
-  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  if (!res.success) {
+    DAY_EVENTS_CACHE = DAY_EVENTS_CACHE.filter(e => !e._pending);
+    renderDayEventsList();
+    alert('저장 실패: ' + res.message);
+    return;
+  }
   refreshDaySheet();
   fetchCalendar();
 }
@@ -942,27 +992,52 @@ function payMethodIcon(label) {
   if (label === '현금') return '💵 ';
   return '';
 }
-/* 목록의 각 줄은 눌러서 수정/삭제할 수 있다(저장 중인 임시 줄은 제외 — 아직 TxnID가 없음). */
+// 카테고리 이름에 있는 키워드로 이모지를 골라서 맨 앞에 붙인다 — 어디에 썼는지 한눈에.
+// 정확한 분류가 목적이 아니라 "훑어볼 때 감이 오는" 정도가 목적이라 키워드 매칭이면 충분함.
+function categoryEmoji(t) {
+  if (t.TxnType === '이체') return '🔁';
+  if (t.TxnType === '수입') return '💰';
+  if (t.TxnType === '조정') return '🛠️';
+  var name = t.CategoryName || '';
+  var rules = [
+    ['식비', '🍚'], ['카페', '☕'], ['간식', '☕'], ['교통', '🚗'], ['주유', '⛽'],
+    ['통신', '📱'], ['관리비', '🏠'], ['주거', '🏠'], ['공과금', '💡'],
+    ['보험', '🛡️'], ['의료', '🏥'], ['건강', '🏥'], ['자녀', '🍼'], ['양육', '🍼'],
+    ['문화', '🎬'], ['여가', '🎬'], ['미용', '💇'], ['경조사', '🎁'], ['명절', '🎁'],
+    ['자동차', '🚙'], ['여행', '✈️'], ['가전', '🛋️'], ['가구', '🛋️'], ['쇼핑', '🛍️'], ['의류', '🛍️']
+  ];
+  for (var i = 0; i < rules.length; i++) { if (name.indexOf(rules[i][0]) !== -1) return rules[i][1]; }
+  return '🧾';
+}
+function shortDate(d) { return String(d || '').slice(5).replace('-', '/'); } // '2026-09-16' → '09/16'
+/* 목록의 각 줄은 눌러서 수정/삭제할 수 있다(저장 중인 임시 줄은 제외 — 아직 TxnID가 없음).
+ * 한 줄에 한 항목만 — 텍스트가 길어지면 줄바꿈되는 대신 말줄임표로 잘리고(.txnText),
+ * 날짜/아이콘은 왼쪽에, 금액/수정아이콘은 오른쪽에 고정폭으로 고정돼서 안 밀린다. */
 let LT_TXN_MAP = {};
 function rememberTxns(list) { (list || []).forEach(t => { if (t.TxnID) LT_TXN_MAP[t.TxnID] = t; }); }
 function txnRowHtml(t) {
   const sign = t.TxnType === '지출' ? '-' : '+'; const color = t.TxnType === '지출' ? 'var(--danger)' : 'var(--success)';
   const clickable = t.TxnID && !t._pending;
-  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') +
-    (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')" style="cursor:pointer;"' : '') + '><span>' +
-    t.TxnDate + (t.AccountName ? ' · ' + payMethodIcon(t.PayMethodLabel) + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') +
-    (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' <span class="muted">(' + t.Memo + ')</span>' : '') +
-    (clickable ? ' <span class="muted">✏️</span>' : '') + '</span>' +
-    '<span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + (t._pending ? ' <span class="muted">저장 중…</span>' : '') + '</span></div>';
+  const text = (t.AccountName ? payMethodIcon(t.PayMethodLabel) + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') +
+    (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' (' + t.Memo + ')' : '');
+  return '<div class="txnRowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')"' : '') + '>' +
+    '<span class="txnIcon">' + categoryEmoji(t) + '</span>' +
+    '<span class="txnDate">' + shortDate(t.TxnDate) + '</span>' +
+    '<span class="txnText">' + text + '</span>' +
+    '<span class="txnAmt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + '</span>' +
+    (t._pending ? '<span class="txnPending muted">저장중</span>' : (clickable ? '<span class="txnEdit">✏️</span>' : '')) +
+    '</div>';
 }
 function transferRowHtml(t) {
   const clickable = t.TxnID && !t._pending;
-  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') +
-    (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')" style="cursor:pointer;"' : '') + '><span>' +
-    t.TxnDate + ' · ' + t.FromAccountName + ' → ' + t.ToAccountName +
-    (t.ReferenceType === 'CARD_PAYMENT' ? ' <span class="muted">(카드대금)</span>' : '') +
-    (t._pending ? ' <span class="muted">저장 중…</span>' : '') + (clickable ? ' <span class="muted">✏️</span>' : '') +
-    '</span><span class="amt">' + fmtWon(t.Amount) + '</span></div>';
+  const text = t.FromAccountName + ' → ' + t.ToAccountName + (t.ReferenceType === 'CARD_PAYMENT' ? ' (카드대금)' : '');
+  return '<div class="txnRowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')"' : '') + '>' +
+    '<span class="txnIcon">🔁</span>' +
+    '<span class="txnDate">' + shortDate(t.TxnDate) + '</span>' +
+    '<span class="txnText">' + text + '</span>' +
+    '<span class="txnAmt">' + fmtWon(t.Amount) + '</span>' +
+    (t._pending ? '<span class="txnPending muted">저장중</span>' : (clickable ? '<span class="txnEdit">✏️</span>' : '')) +
+    '</div>';
 }
 function updateLtTxnList(transactions) {
   rememberTxns(transactions);
@@ -1483,15 +1558,39 @@ async function renderSettingsAccounts() {
 function renderSettingsAccountsHtml(data) {
   const box = document.getElementById('settingsBody');
   SETTINGS_ACCOUNTS_CACHE = data;
-  box.innerHTML = '<div class="card"><div class="cardTitle">계좌 목록</div><div id="acctListBody">' +
-    data.map(a => '<div id="macc-' + a.AccountID + '"><div class="rowLine"><span>' + a.Name + ' <span class="muted">(' + (profileName(a.OwnerID) || '공동') + (String(a.IsLiability) === 'true' ? ', 부채' : '') + ')</span></span><span class="amt">' + fmtWon(a.CurrentBalance) + ' <button class="btn-sm btn-ghost" onclick="editAccountM(\'' + a.AccountID + '\')">수정</button> <button class="btn-sm btn-danger" onclick="delAccount(\'' + a.AccountID + '\')">삭제</button></span></div></div>').join('') +
+  // 상단 공동/진한/선영 토글에 맞춰 그 사람 명의(+공동) 계좌만 보여준다.
+  const shown = data.filter(a => isOwnedBy(a, SCOPE === 'shared' ? null : SCOPE));
+  box.innerHTML = '<div class="card"><div class="cardTitle">계좌 목록' + (SCOPE !== 'shared' ? ' · ' + profileName(SCOPE) : '') + '</div><div id="acctListBody">' +
+    (shown.map(a => '<div id="macc-' + a.AccountID + '"><div class="rowLine"><span>' + a.Name + ' <span class="muted">(' + (profileName(a.OwnerID) || '공동') + (String(a.IsLiability) === 'true' ? ', 부채' : '') + ')</span>' +
+      (a.AccountNumber ? '<br><span class="muted" style="font-size:11px;">' + a.AccountNumber + '</span>' : '') + '</span>' +
+      '<span class="amt">' + fmtWon(a.CurrentBalance) +
+      (a.AccountNumber ? ' <button class="btn-sm btn-ghost" onclick="copyAccountNumberM(\'' + a.AccountID + '\')">복사</button>' : '') +
+      ' <button class="btn-sm btn-ghost" onclick="editAccountM(\'' + a.AccountID + '\')">수정</button> <button class="btn-sm btn-danger" onclick="delAccount(\'' + a.AccountID + '\')">삭제</button></span></div></div>').join('') ||
+      '<div class="emptyState">' + (SCOPE === 'shared' ? '등록된 계좌 없음' : profileName(SCOPE) + ' 명의의 계좌가 없어요.') + '</div>') +
     '</div></div><div class="card"><div class="cardTitle">계좌 추가</div>' +
     '<div class="field"><label>이름</label><input id="newAccName"></div>' +
-    '<div class="field"><label>소유자</label><select id="newAccOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '">' + p.Name + '</option>').join('') + '<option value="shared">공동</option></select></div>' +
+    '<div class="field"><label>소유자</label><select id="newAccOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '"' + (p.ProfileID === SCOPE ? ' selected' : '') + '>' + p.Name + '</option>').join('') + '<option value="shared"' + (SCOPE === 'shared' ? ' selected' : '') + '>공동</option></select></div>' +
     '<div class="field"><label>유형</label><input id="newAccType" placeholder="급여통장/CMA 등"></div>' +
     '<div class="field"><label>기관</label><input id="newAccInst"></div>' +
+    '<div class="field"><label>계좌번호(선택)</label><input id="newAccNumber" placeholder="예: 123-456-789012"></div>' +
     '<div class="field"><label><input type="checkbox" id="newAccLiability"> 부채 계좌(대출 등)</label></div>' +
     '<button class="btn btn-gold" onclick="addAccountM()">저장</button></div>';
+}
+// 클립보드 복사 — HTTPS가 아니거나(오래된 브라우저 등) navigator.clipboard가 없을 때를 대비한 대체 경로 포함.
+async function copyAccountNumberM(id) {
+  const a = SETTINGS_ACCOUNTS_CACHE.find(x => x.AccountID === id);
+  if (!a || !a.AccountNumber) return;
+  try {
+    await navigator.clipboard.writeText(a.AccountNumber);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = a.AccountNumber; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    try { document.execCommand('copy'); } catch (e2) { alert('복사에 실패했어요: ' + a.AccountNumber); document.body.removeChild(ta); return; }
+    document.body.removeChild(ta);
+  }
+  const btn = event && event.target;
+  if (btn) { const orig = btn.innerText; btn.innerText = '복사됨'; setTimeout(() => { btn.innerText = orig; }, 1200); }
 }
 let SETTINGS_ACCOUNTS_CACHE = [];
 function editAccountM(id) {
@@ -1501,13 +1600,14 @@ function editAccountM(id) {
     '<div class="field"><label>이름</label><input id="eAccName-' + id + '" value="' + a.Name.replace(/"/g, '&quot;') + '"></div>' +
     '<div class="field"><label>유형</label><input id="eAccType-' + id + '" value="' + (a.Type || '').replace(/"/g, '&quot;') + '"></div>' +
     '<div class="field"><label>기관</label><input id="eAccInst-' + id + '" value="' + (a.Institution || '').replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field"><label>계좌번호</label><input id="eAccNumber-' + id + '" value="' + String(a.AccountNumber || '').replace(/"/g, '&quot;') + '"></div>' +
     '<div class="field"><label><input type="checkbox" id="eAccLiability-' + id + '"' + (String(a.IsLiability) === 'true' ? ' checked' : '') + '> 부채 계좌(대출 등)</label></div>' +
     '<div class="field"><label>현재 잔액(맞으면 그대로 두세요 — 바뀐 만큼만 "조정" 거래로 남아요)</label><input id="eAccBal-' + id + '" type="number" value="' + a.CurrentBalance + '"></div>' +
     '<button class="btn btn-gold" onclick="saveAccountEditM(\'' + id + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="renderSettingsAccounts()">취소</button>';
 }
 async function saveAccountEditM(id) {
   const a = SETTINGS_ACCOUNTS_CACHE.find(x => x.AccountID === id);
-  const patch = { Name: document.getElementById('eAccName-' + id).value, Type: document.getElementById('eAccType-' + id).value, Institution: document.getElementById('eAccInst-' + id).value, IsLiability: document.getElementById('eAccLiability-' + id).checked };
+  const patch = { Name: document.getElementById('eAccName-' + id).value, Type: document.getElementById('eAccType-' + id).value, Institution: document.getElementById('eAccInst-' + id).value, AccountNumber: document.getElementById('eAccNumber-' + id).value, IsLiability: document.getElementById('eAccLiability-' + id).checked };
   const newBal = Number(document.getElementById('eAccBal-' + id).value);
   const res1 = await api('updateAccount', [id, patch]);
   if (!res1.success) { alert('저장 실패: ' + res1.message); return; }
@@ -1516,7 +1616,7 @@ async function saveAccountEditM(id) {
   renderSettingsAccounts();
 }
 async function addAccountM() {
-  const res = await api('addAccount', [document.getElementById('newAccOwner').value, document.getElementById('newAccName').value, document.getElementById('newAccType').value, document.getElementById('newAccInst').value, document.getElementById('newAccLiability').checked]);
+  const res = await api('addAccount', [document.getElementById('newAccOwner').value, document.getElementById('newAccName').value, document.getElementById('newAccType').value, document.getElementById('newAccInst').value, document.getElementById('newAccLiability').checked, document.getElementById('newAccNumber').value]);
   if (!res.success) { alert('실패: ' + res.message); return; }
   renderSettingsAccounts();
 }
@@ -1540,23 +1640,26 @@ async function renderSettingsCards() {
 function renderSettingsCardsHtml(cards, accounts) {
   const box = document.getElementById('settingsBody');
   const payAccounts = accounts.filter(a => String(a.AccountClass || '').toUpperCase() !== 'LIABILITY' && String(a.IsLiability) !== 'true');
-  const accOpts = payAccounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
-  box.innerHTML = '<div class="card"><div class="cardTitle">카드 목록</div>' +
-    (cards.map(c => '<div class="rowLine"><span>' + c.CardName +
+  // 상단 공동/진한/선영 토글에 맞춰 카드 목록과 "결제계좌" 선택지도 그 사람 것(+공동)만.
+  const scopedCards = cards.filter(c => isOwnedBy(c, SCOPE === 'shared' ? null : SCOPE));
+  const scopedAccounts = payAccounts.filter(a => isOwnedBy(a, SCOPE === 'shared' ? null : SCOPE));
+  const accOpts = scopedAccounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
+  box.innerHTML = '<div class="card"><div class="cardTitle">카드 목록' + (SCOPE !== 'shared' ? ' · ' + profileName(SCOPE) : '') + '</div>' +
+    (scopedCards.map(c => '<div class="rowLine"><span>' + c.CardName +
       ' <span class="muted">(' + (c.CardKind === 'CREDIT' ? '신용' : '체크') +
       (c.CardKind === 'CREDIT' && c.BillingDay ? ' · 마감 ' + c.BillingDay + '일' : '') +
       (c.CardKind === 'CREDIT' && c.PaymentDay ? ' · 결제 ' + c.PaymentDay + '일' : '') + ')</span>' +
       '<br><span class="muted">' + (c.CardKind === 'CREDIT' ? '대금 출금: ' : '즉시 출금: ') + c.AccountName + '</span></span>' +
       '<button class="btn-sm btn-danger" onclick="delCardM(\'' + c.CardID + '\')">삭제</button></div>').join('') ||
-      '<div class="emptyState">등록된 카드 없음</div>') +
+      '<div class="emptyState">' + (SCOPE === 'shared' ? '등록된 카드 없음' : profileName(SCOPE) + ' 명의의 카드가 없어요.') + '</div>') +
     '</div><div class="card"><div class="cardTitle">카드 추가</div>' +
     '<div class="field"><label>이름</label><input id="newCardName"></div>' +
     '<div class="field"><label>유형</label><select id="newCardType" onchange="onCardTypeChangeM()"><option>체크</option><option>신용</option></select></div>' +
     '<div id="newCardCreditRows" style="display:none;">' +
     '<div class="field"><label>청구 마감일(매달 며칠까지 쓴 걸 묶어서 청구하나요)</label><input id="newCardBilling" type="number" min="1" max="28" placeholder="예: 15"></div>' +
     '<div class="field"><label>결제일(카드대금이 빠지는 날)</label><input id="newCardPayment" type="number" min="1" max="28" placeholder="예: 25"></div></div>' +
-    '<div class="field"><label id="newCardAccountLabel">결제계좌</label><select id="newCardAccount">' + accOpts + '</select></div>' +
-    '<div class="field"><label>명의자</label><select id="newCardOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '">' + p.Name + '</option>').join('') + '</select></div>' +
+    '<div class="field"><label id="newCardAccountLabel">결제계좌</label><select id="newCardAccount">' + (accOpts || '<option value="">(' + (SCOPE === 'shared' ? '' : profileName(SCOPE) + ' 명의') + ' 계좌 없음)</option>') + '</select></div>' +
+    '<div class="field"><label>명의자</label><select id="newCardOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '"' + (p.ProfileID === SCOPE ? ' selected' : '') + '>' + p.Name + '</option>').join('') + '</select></div>' +
     '<div class="muted" style="margin:6px 0;line-height:1.6;">' +
     '<b>신용카드</b>: 쓴 순간 지출로 기록되고 카드빚이 늘어요. 통장은 결제일에 <b>한 번만</b> 빠져요(가계부 → 카드 탭에서 결제).<br>' +
     '<b>체크카드</b>: 쓰는 즉시 연결계좌에서 빠져요.</div>' +
@@ -1690,17 +1793,21 @@ async function renderSettingsRecurring() {
 }
 function renderSettingsRecurringHtml(d) {
   const box = document.getElementById('settingsBody');
-  const accOpts = d.accounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
+  // 상단 토글에 맞춰 그 사람(+공동) 고정지출과 계좌 선택지만 보여준다.
+  const scopedRules = d.rules.filter(r => isOwnedBy(r, SCOPE === 'shared' ? null : SCOPE));
+  const scopedAccounts = d.accounts.filter(a => isOwnedBy(a, SCOPE === 'shared' ? null : SCOPE));
+  const accOpts = scopedAccounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
   const catOpts = d.categories.map(c => '<option value="' + c.CategoryID + '">' + c.GroupName + ' · ' + c.Name + '</option>').join('');
-  box.innerHTML = '<div class="card"><div class="cardTitle">고정지출 목록</div>' +
-    d.rules.map(r => '<div class="rowLine"><span>' + r.Name + ' <span class="muted">(' + r.OwnerName + ', 매달 ' + r.DayOfMonth + '일)</span></span><span class="amt">' + fmtWon(r.Amount) + ' <button class="btn-sm btn-danger" onclick="delRecurring(\'' + r.RuleID + '\')">삭제</button></span></div>').join('') +
+  box.innerHTML = '<div class="card"><div class="cardTitle">고정지출 목록' + (SCOPE !== 'shared' ? ' · ' + profileName(SCOPE) : '') + '</div>' +
+    (scopedRules.map(r => '<div class="rowLine"><span>' + r.Name + ' <span class="muted">(' + r.OwnerName + ', 매달 ' + r.DayOfMonth + '일)</span></span><span class="amt">' + fmtWon(r.Amount) + ' <button class="btn-sm btn-danger" onclick="delRecurring(\'' + r.RuleID + '\')">삭제</button></span></div>').join('') ||
+      '<div class="emptyState">' + (SCOPE === 'shared' ? '등록된 고정지출 없음' : profileName(SCOPE) + ' 명의의 고정지출이 없어요.') + '</div>') +
     '<button class="btn btn-ghost" style="margin-top:10px;" onclick="applyRecurringM()">이번 달 거래로 반영</button>' +
     '</div><div class="card"><div class="cardTitle">고정지출 추가</div>' +
     '<div class="field"><label>이름</label><input id="recName"></div>' +
-    '<div class="field"><label>소유자</label><select id="recOwner">' + d.profiles.map(p => '<option value="' + p.ProfileID + '">' + p.Name + '</option>').join('') + '<option value="shared">공동</option></select></div>' +
+    '<div class="field"><label>소유자</label><select id="recOwner">' + d.profiles.map(p => '<option value="' + p.ProfileID + '"' + (p.ProfileID === SCOPE ? ' selected' : '') + '>' + p.Name + '</option>').join('') + '<option value="shared"' + (SCOPE === 'shared' ? ' selected' : '') + '>공동</option></select></div>' +
     '<div class="field"><label>금액</label><input id="recAmount" type="number"></div>' +
     '<div class="field"><label>카테고리</label><select id="recCategory">' + catOpts + '</select></div>' +
-    '<div class="field"><label>빠져나갈 계좌</label><select id="recAccount">' + accOpts + '</select></div>' +
+    '<div class="field"><label>빠져나갈 계좌</label><select id="recAccount">' + (accOpts || '<option value="">(' + (SCOPE === 'shared' ? '' : profileName(SCOPE) + ' 명의') + ' 계좌 없음)</option>') + '</select></div>' +
     '<div class="field"><label>매달 며칠</label><input id="recDay" type="number" value="25"></div>' +
     '<button class="btn btn-gold" onclick="addRecurringM()">저장</button></div>';
 }
