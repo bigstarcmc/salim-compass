@@ -105,16 +105,28 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .dayCell .num{font-size:13px; font-weight:800;}
 .dayCell .badge{position:absolute; bottom:5px; right:5px; min-width:22px; height:22px; padding:0 5px; border-radius:11px;
   font-size:10px; font-weight:800; display:flex; align-items:center; justify-content:center; color:#fff;}
-.dayCell .memo{position:absolute; top:24px; left:6px; right:6px; font-size:10px; font-weight:700; color:var(--gold-deep);
-  line-height:1.25; max-height:34px; overflow:hidden;}
 .dayCell.today{outline:2px solid var(--ink);}
 .today{outline:2px solid var(--ink);}
 .bg-주{background:#FBF0D3;} .bg-야{background:#E6E9F5;} .bg-휴{background:#F5F3EC;}
 .b-주{background:var(--day); color:#4A3200;} .b-야{background:var(--night);} .b-휴{background:transparent; color:var(--danger); font-size:10px;}
 .b-휴가{background:#3BA36A;} .b-대근주간{background:#C026D3;} .b-대근야간{background:#581C87;}
 .b-교육{background:#2F6FED;} .b-건강검진{background:#0E93A8;} .b-개인일정{background:#6B7280;}
-.dotImp{position:absolute; top:3px; right:4px; font-size:8px; animation:blinkDot 1.1s infinite;}
-@keyframes blinkDot{0%,100%{opacity:1;} 50%{opacity:.25;}}
+
+/* 달력 칸에는 글씨를 최소로만 넣는다 — 휴가/대근만 글자로 눈에 띄고,
+   나머지 일정은 색 점으로만 표시하고 내용은 날짜를 눌러서 본다. */
+.dayCell .dots{position:absolute; bottom:6px; left:6px; display:flex; gap:3px; align-items:center;}
+.dayCell .evDot{width:6px; height:6px; border-radius:50%; display:block;}
+.dayCell .evMore{font-size:8px; font-weight:800; color:var(--ink-mute); line-height:1;}
+.dotImp{position:absolute; top:5px; right:5px; width:8px; height:8px; border-radius:50%;
+  background:#E8452C; box-shadow:0 0 0 0 rgba(232,69,44,.65); animation:blinkDot 1.2s infinite;}
+@keyframes blinkDot{0%{opacity:1; box-shadow:0 0 0 0 rgba(232,69,44,.6);}
+  70%{opacity:.35; box-shadow:0 0 0 6px rgba(232,69,44,0);}
+  100%{opacity:1; box-shadow:0 0 0 0 rgba(232,69,44,0);}}
+
+.itemRow{display:flex; justify-content:space-between; align-items:center; gap:8px; padding:9px 0; border-bottom:1px solid #F4EFE3; font-size:14px;}
+.itemRow:last-child{border-bottom:none;}
+.itemActions{display:flex; gap:6px; flex:0 0 auto;}
+.typeChip{display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:800; color:#fff; margin-right:6px;}
 
 .myTeamChip{display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--gold-soft); color:var(--gold-deep);
   padding:10px 14px; border-radius:14px; font-weight:700; font-size:12px; margin-bottom:12px;}
@@ -411,6 +423,18 @@ function renderHomeBox(box, d) {
       null);
   }
 
+  if (d.cashflow) {
+    // "총지출"과 "통장에서 실제로 빠진 돈"은 다른 값이다. 카드를 쓰면 지출은 바로 잡히지만
+    // 통장은 결제일에야 줄기 때문에, 이 둘을 한 숫자로 합쳐 보여주면 반드시 헷갈린다.
+    html += accordionCard('지출 구성 (카드 포함)', 'home-cashflow', true,
+      '<div class="rowLine"><span>총 지출 <span class="muted">(카드 사용 포함)</span></span><span class="amt">' + fmtWon(d.cashflow.totalExpense) + '</span></div>' +
+      '<div class="rowLine"><span>└ 현금 유출 <span class="muted">(통장에서 실제로 나감)</span></span><span class="amt">' + fmtWon(d.cashflow.cashOutflow) + '</span></div>' +
+      '<div class="rowLine"><span>└ 카드 사용액 <span class="muted">(아직 안 나감)</span></span><span class="amt">' + fmtWon(d.cashflow.cardUsage) + '</span></div>' +
+      '<div class="rowLine"><span>현재 카드 미결제액</span><span class="amt" style="color:var(--danger);">' + fmtWon(d.cashflow.cardUnpaid) + '</span></div>' +
+      '<div class="muted" style="margin-top:6px;">이 기간에 결제한 카드대금 ' + fmtWon(d.cashflow.cardPayment) + '은 지출이 아니라 이체라서 총 지출에 다시 더해지지 않아요.</div>',
+      'ledger', 'card');
+  }
+
   html += accordionCard('예상 급여', 'home-payroll', true,
     d.predictedPayroll.map(p => '<div class="rowLine"><span>' + p.name + '</span><span class="amt">' + fmtWon(p.amount) + '</span></div>').join('') +
     '<div class="rowLine" style="font-weight:800;"><span>합계(예상)</span><span class="amt">' + fmtWon(d.predictedPayrollTotal) + '</span></div>',
@@ -476,12 +500,15 @@ function jumpTo(view, sub) {
   switchView(view);
   if (sub === 'budget') setTimeout(() => switchLtView('budget'), 150);
   if (sub === 'exp') setTimeout(() => switchLtView('exp'), 150);
+  if (sub === 'card') setTimeout(() => switchLtView('card'), 150);
 }
 
 /* ================= 캘린더 ================= */
 let calDate = new Date();
 let calSelectedDate = null;
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
+// 일정 종류별 점 색깔 (달력 칸에는 글씨 대신 이 점만 찍는다)
+const EV_COLOR = { '휴가': '#3BA36A', '대근': '#C026D3', '교육': '#2F6FED', '건강검진': '#0E93A8', '개인일정': '#6B7280' };
 
 function loadCalendar() {
   const el = document.getElementById('view-calendar');
@@ -490,7 +517,11 @@ function loadCalendar() {
     '<div class="card"><div class="calHead"><button onclick="calShift(-1)">◀</button><span class="ym" id="calYm"></span><button onclick="calShift(1)">▶</button></div>' +
     '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);margin-bottom:10px;"><input type="checkbox" id="calAllTeams" onchange="fetchCalendar()"> 4개조 전체 보기</label>' +
     '<div id="calSingleView"><div class="weekRow">' + WD.map(w => '<div>' + w + '</div>').join('') + '</div><div class="dayGrid" id="calGrid"></div></div>' +
-    '<div id="calAllTeamsView" style="display:none;"></div></div>';
+    '<div id="calAllTeamsView" style="display:none;"></div>' +
+    '<div class="muted" style="margin-top:10px;line-height:1.7;">' +
+    '달력에는 <b>휴가 · 대근</b>만 글자로 표시돼요. 그 외 일정은 색 점(' +
+    ['교육', '건강검진', '개인일정'].map(t => '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + EV_COLOR[t] + ';margin:0 3px 0 6px;"></span>' + t).join('') +
+    ')으로만 찍히고, <b>날짜를 누르면</b> 내용이 나와요. 빨간 점이 깜빡이면 중요일정이에요.</div></div>';
   fetchCalendar();
 }
 function calShift(n) { calDate.setMonth(calDate.getMonth() + n); fetchCalendar(); }
@@ -590,22 +621,30 @@ function renderCalGrid(shifts, events) {
     const type = shifts[dateStr];
     const num = Number(dateStr.split('-')[2]);
     const dayEvents = events.filter(e => e.EventDate === dateStr);
+
+    // 글자로 보여주는 건 딱 두 가지 — 휴가와 대근. 이 둘은 근무/돈이 직접 바뀌는 일이라
+    // 달력을 훑을 때 바로 보여야 한다. 나머지(교육/건강검진/개인일정)는 색 점으로만.
     let badgeCls = 'b-' + type, badgeText = type;
-    let important = false;
-    let memo = dayEvents.map(e => e.Memo).filter(Boolean).join(', ');
-    if (dayEvents.length) {
-      important = dayEvents.some(e => String(e.IsImportant) === 'true');
-      const swap = dayEvents.find(e => e.Type === '대근');
-      const vac = dayEvents.find(e => e.Type === '휴가');
-      const pick = swap || vac || dayEvents[0];
-      if (pick.Type === '대근') { const night = pick.SwapDirection === '야간'; badgeCls = night ? 'b-대근야간' : 'b-대근주간'; badgeText = night ? '대근(야)' : '대근(주)'; }
-      else { badgeCls = 'b-' + pick.Type; badgeText = pick.Type; }
-    }
+    const swap = dayEvents.find(e => e.Type === '대근');
+    const vac = dayEvents.find(e => e.Type === '휴가');
+    if (swap) {
+      const night = swap.SwapDirection === '야간';
+      badgeCls = night ? 'b-대근야간' : 'b-대근주간';
+      badgeText = night ? '대근야' : '대근주';
+    } else if (vac) { badgeCls = 'b-휴가'; badgeText = '휴가'; }
+
+    const others = dayEvents.filter(e => e !== swap && e !== vac);
+    const dots = others.slice(0, 3).map(e =>
+      '<span class="evDot" style="background:' + (EV_COLOR[e.Type] || '#6B7280') + ';"></span>').join('') +
+      (others.length > 3 ? '<span class="evMore">+' + (others.length - 3) + '</span>' : '');
+    // 중요일정은 문구 없이 빨간 점만 깜빡인다 — 무슨 일인지는 눌러서 확인.
+    const important = dayEvents.some(e => String(e.IsImportant) === 'true');
+
     return '<div class="dayCell bg-' + type + (dateStr === today ? ' today' : '') + '" onclick="openDaySheet(\'' + dateStr + '\')">' +
       '<span class="num">' + num + '</span>' +
-      (memo ? '<span class="memo">' + memo + '</span>' : '') +
+      (dots ? '<span class="dots">' + dots + '</span>' : '') +
       '<span class="badge ' + badgeCls + '">' + badgeText + '</span>' +
-      (important ? '<span class="dotImp">🔴</span>' : '') + '</div>';
+      (important ? '<span class="dotImp"></span>' : '') + '</div>';
   }).join('');
 }
 
@@ -622,7 +661,13 @@ async function refreshDaySheet() {
   DAY_EVENTS_CACHE = res.data.events;
   DAY_JOURNAL_CACHE = res.data.journal;
   let html = '<div class="cardTitle" style="margin-top:6px;">일정</div>';
-  html += DAY_EVENTS_CACHE.map(e => '<div class="itemRow"><span>' + e.Type + (e.Memo ? ' - ' + e.Memo : '') + (e.Location ? ' 📍' + e.Location : '') + (String(e.IsImportant) === 'true' ? ' 🔴' : '') + '</span>' +
+  // 달력 칸에서 뺀 글자(메모·장소·작성자)는 전부 여기서 보여준다 — 날짜를 누르면 나오는 화면.
+  html += DAY_EVENTS_CACHE.map(e => '<div class="itemRow"><span>' +
+    '<span class="typeChip" style="background:' + (EV_COLOR[e.Type] || '#6B7280') + ';">' + e.Type + (e.Type === '대근' && e.SwapDirection ? '(' + e.SwapDirection + ')' : '') + '</span>' +
+    (String(e.IsImportant) === 'true' ? '🔴 ' : '') +
+    (e.Memo ? e.Memo : '<span class="muted">(메모 없음)</span>') +
+    (e.Location ? ' <span class="muted">📍' + e.Location + '</span>' : '') +
+    (profileName(e.OwnerID) ? ' <span class="muted">· ' + profileName(e.OwnerID) + '</span>' : '') + '</span>' +
     '<span class="itemActions"><button class="btn-sm btn-ghost" onclick="editEventM(\'' + e.EventID + '\')">수정</button>' +
     '<button class="btn-sm btn-danger" onclick="deleteEventM(\'' + e.EventID + '\')">삭제</button></span></div>').join('') || '<div class="emptyState">일정 없음</div>';
   html += '<div class="cardTitle" style="margin-top:14px;">일지</div>';
@@ -838,9 +883,11 @@ async function loadLedger() {
     '<button class="pill active" data-lt="exp" onclick="switchLtView(\'exp\')">지출</button>' +
     '<button class="pill" data-lt="transfer" onclick="switchLtView(\'transfer\')">이체</button>' +
     '<button class="pill" data-lt="inc" onclick="switchLtView(\'inc\')">변동소득</button>' +
+    '<button class="pill" data-lt="card" onclick="switchLtView(\'card\')">카드</button>' +
     '<button class="pill" data-lt="budget" onclick="switchLtView(\'budget\')">지출목표</button></div>' +
     '<div id="ltExp"><div class="muted" style="padding:20px 0;">불러오는 중...</div></div>' +
-    '<div id="ltTransfer" style="display:none;"></div><div id="ltInc" style="display:none;"></div><div id="ltBudget" style="display:none;"></div>';
+    '<div id="ltTransfer" style="display:none;"></div><div id="ltInc" style="display:none;"></div>' +
+    '<div id="ltCard" style="display:none;"></div><div id="ltBudget" style="display:none;"></div>';
   const ownerFilter = SCOPE === 'shared' ? 'all' : SCOPE;
   const args = [todayYm(), ownerFilter];
 
@@ -859,35 +906,126 @@ async function loadLedger() {
   }
 }
 
+/* 목록의 각 줄은 눌러서 수정/삭제할 수 있다(저장 중인 임시 줄은 제외 — 아직 TxnID가 없음). */
+let LT_TXN_MAP = {};
+function rememberTxns(list) { (list || []).forEach(t => { if (t.TxnID) LT_TXN_MAP[t.TxnID] = t; }); }
 function txnRowHtml(t) {
   const sign = t.TxnType === '지출' ? '-' : '+'; const color = t.TxnType === '지출' ? 'var(--danger)' : 'var(--success)';
-  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + '><span>' + t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') + (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' <span class="muted">(' + t.Memo + ')</span>' : '') + '</span><span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + (t._pending ? ' <span class="muted">저장 중…</span>' : '') + '</span></div>';
+  const clickable = t.TxnID && !t._pending;
+  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') +
+    (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')" style="cursor:pointer;"' : '') + '><span>' +
+    t.TxnDate + (t.AccountName ? ' · ' + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') +
+    (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' <span class="muted">(' + t.Memo + ')</span>' : '') +
+    (clickable ? ' <span class="muted">✏️</span>' : '') + '</span>' +
+    '<span class="amt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + (t._pending ? ' <span class="muted">저장 중…</span>' : '') + '</span></div>';
 }
 function transferRowHtml(t) {
-  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + '><span>' + t.TxnDate + ' · ' + t.FromAccountName + ' → ' + t.ToAccountName + (t._pending ? ' <span class="muted">저장 중…</span>' : '') + '</span><span class="amt">' + fmtWon(t.Amount) + '</span></div>';
+  const clickable = t.TxnID && !t._pending;
+  return '<div class="rowLine"' + (t._pending ? ' style="opacity:.55;"' : '') +
+    (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')" style="cursor:pointer;"' : '') + '><span>' +
+    t.TxnDate + ' · ' + t.FromAccountName + ' → ' + t.ToAccountName +
+    (t.ReferenceType === 'CARD_PAYMENT' ? ' <span class="muted">(카드대금)</span>' : '') +
+    (t._pending ? ' <span class="muted">저장 중…</span>' : '') + (clickable ? ' <span class="muted">✏️</span>' : '') +
+    '</span><span class="amt">' + fmtWon(t.Amount) + '</span></div>';
 }
 function updateLtTxnList(transactions) {
+  rememberTxns(transactions);
   const list = document.getElementById('ltTxnList');
   if (!list) return;
   list.innerHTML = transactions.filter(t => t.TxnType === '지출' || t.TxnType === '수입').map(txnRowHtml).join('') || '<div class="emptyState">이번 달 거래 없음</div>';
 }
 function updateLtTransferList(transactions) {
+  rememberTxns(transactions);
   const list = document.getElementById('transferListM');
   if (!list) return;
   list.innerHTML = transactions.filter(t => t.TxnType === '이체').map(transferRowHtml).join('') || '<div class="emptyState">이번 달 이체 없음</div>';
 }
 
+/* ---- 거래 수정 / 삭제 ----
+ * 잔액 되돌리기는 서버(updateTransaction)가 "옛 거래 영향 취소 → 새 내용으로 다시 적용"으로
+ * 처리하므로, 여기서는 바뀐 필드만 보내면 된다. 신용카드로 바꾸면 은행계좌가 아니라
+ * 카드 부채계좌로 자동으로 다시 연결되는 것도 서버가 알아서 한다.
+ */
+function openTxnEditor(txnId) {
+  const t = LT_TXN_MAP[txnId];
+  if (!t) return;
+  const accOpts = (sel) => LT_ACCOUNTS.map(a => '<option value="' + a.AccountID + '"' + (a.AccountID === sel ? ' selected' : '') + '>' + a.Name + '</option>').join('');
+  const isTransfer = t.TxnType === '이체';
+  let body =
+    '<div class="muted" style="margin-bottom:10px;">' + t.TxnType + (t.ReferenceType ? ' · ' + t.ReferenceType : '') + '</div>' +
+    '<div class="field"><label>날짜</label><input id="etDate" type="date" value="' + (t.TxnDate || '') + '"></div>' +
+    '<div class="field"><label>금액</label><input id="etAmount" type="number" value="' + Number(t.Amount || 0) + '"></div>';
+  if (isTransfer) {
+    body += '<div class="field"><label>출금 계좌</label><select id="etFrom">' + accOpts(t.FromAccountID) + '</select></div>' +
+      '<div class="field"><label>입금 계좌</label><select id="etTo">' + accOpts(t.ToAccountID) + '</select></div>';
+  } else {
+    const byCard = !!t.CardID;
+    body += '<div class="field"><label>결제수단</label><select id="etPayMethod" onchange="toggleEtPayMethod()">' +
+      '<option value="account"' + (byCard ? '' : ' selected') + '>계좌</option>' +
+      '<option value="card"' + (byCard ? ' selected' : '') + '>카드</option></select></div>' +
+      '<div class="field" id="etAccountRow"><label>계좌</label><select id="etAccount">' + accOpts(t.AccountID) + '</select></div>' +
+      '<div class="field" id="etCardRow"><label>카드</label><select id="etCard">' +
+      LT_CARDS.map(c => '<option value="' + c.CardID + '"' + (c.CardID === t.CardID ? ' selected' : '') + '>' + c.CardName + ' (' + (c.CardKind === 'CREDIT' ? '신용' : '체크') + ')</option>').join('') + '</select></div>' +
+      '<div class="field"><label>카테고리</label><select id="etCategory"><option value="">선택안함</option>' +
+      LT_CATEGORIES.map(c => '<option value="' + c.CategoryID + '"' + (c.CategoryID === t.CategoryID ? ' selected' : '') + '>' + c.GroupName + ' · ' + c.Name + '</option>').join('') + '</select></div>';
+  }
+  body += '<div class="field"><label>메모</label><input id="etMemo" value="' + String(t.Memo || '').replace(/"/g, '&quot;') + '"></div>' +
+    '<button class="btn btn-gold" onclick="saveTxnEdit(\'' + txnId + '\')">저장</button>' +
+    '<button class="btn btn-danger" style="margin-top:8px;" onclick="deleteTxnM(\'' + txnId + '\')">이 거래 삭제</button>';
+  openSheet('거래 수정', body);
+  if (!isTransfer) toggleEtPayMethod();
+}
+function toggleEtPayMethod() {
+  const byCard = document.getElementById('etPayMethod').value === 'card';
+  document.getElementById('etAccountRow').style.display = byCard ? 'none' : '';
+  document.getElementById('etCardRow').style.display = byCard ? '' : 'none';
+}
+async function saveTxnEdit(txnId) {
+  const t = LT_TXN_MAP[txnId];
+  const patch = {
+    TxnDate: document.getElementById('etDate').value,
+    Amount: Number(document.getElementById('etAmount').value),
+    Memo: document.getElementById('etMemo').value
+  };
+  if (!patch.Amount) { alert('금액을 입력하세요.'); return; }
+  if (t.TxnType === '이체') {
+    patch.FromAccountID = document.getElementById('etFrom').value;
+    patch.ToAccountID = document.getElementById('etTo').value;
+    if (patch.FromAccountID === patch.ToAccountID) { alert('출금/입금 계좌가 같아요.'); return; }
+  } else {
+    const byCard = document.getElementById('etPayMethod').value === 'card';
+    patch.CardID = byCard ? document.getElementById('etCard').value : '';
+    patch.AccountID = byCard ? '' : document.getElementById('etAccount').value;
+    patch.CategoryID = document.getElementById('etCategory').value;
+  }
+  const res = await api('updateTransaction', [txnId, patch]);
+  if (!res.success) { alert('수정 실패: ' + res.message); return; }
+  closeSheet();
+  loadLedger();
+}
+async function deleteTxnM(txnId) {
+  if (!confirm('이 거래를 삭제할까요? 계좌 잔액도 되돌아가요.')) return;
+  const res = await api('deleteTransaction', [txnId]);
+  if (!res.success) { alert('삭제 실패: ' + res.message); return; }
+  closeSheet();
+  loadLedger();
+}
+
 async function renderLtShell(d) {
   LT_CATEGORIES = d.categories; LT_ACCOUNTS = d.accounts; LT_CARDS = d.cards;
-  const accOpts = d.accounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
-  const cardOpts = d.cards.map(c => '<option value="' + c.CardID + '">' + c.CardName + '</option>').join('');
+  rememberTxns(d.transactions);
+  // 이체/입출금용 계좌 목록에는 카드 부채계좌를 넣지 않는다 — 카드대금은 '카드' 탭에서만 처리한다.
+  const payAccounts = d.accounts.filter(a => String(a.AccountClass || '').toUpperCase() !== 'LIABILITY' && String(a.IsLiability) !== 'true');
+  const accOpts = payAccounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
+  const cardOpts = d.cards.map(c => '<option value="' + c.CardID + '">' + c.CardName + ' (' + (c.CardKind === 'CREDIT' ? '신용' : '체크') + ')</option>').join('');
   const groupNames = [...new Set(d.categories.map(c => c.GroupName))];
   document.getElementById('ltExp').innerHTML =
     ownerSelectHtml('ltOwner') +
     '<div class="card"><div class="cardTitle">지출 입력</div>' +
     '<div class="field"><label>결제수단</label><select id="ltPayMethod" onchange="toggleLtPayMethod()"><option value="account">계좌</option><option value="card">카드</option></select></div>' +
     '<div class="field" id="ltAccountRow"><label>계좌</label><select id="ltAccount">' + accOpts + '</select></div>' +
-    '<div class="field" id="ltCardRow" style="display:none;"><label>카드</label><select id="ltCard">' + cardOpts + '</select></div>' +
+    '<div class="field" id="ltCardRow" style="display:none;"><label>카드</label><select id="ltCard" onchange="onLtCardChange()">' + cardOpts + '</select>' +
+    '<div class="muted" id="ltCardHint" style="margin-top:6px;"></div></div>' +
     '<div class="field"><label>카테고리(대분류)</label><select id="ltCatGroup" onchange="onLtCatGroupChange()"><option value="">선택안함</option>' + groupNames.map(g => '<option>' + g + '</option>').join('') + '</select></div>' +
     '<div class="field"><label>카테고리(세부)</label><select id="ltCatDetail"></select></div>' +
     '<div class="field"><label>날짜</label><input id="ltDate" type="date" value="' + ymd(new Date()) + '"></div>' +
@@ -937,13 +1075,26 @@ function toggleLtPayMethod() {
   const byCard = document.getElementById('ltPayMethod').value === 'card';
   document.getElementById('ltAccountRow').style.display = byCard ? 'none' : '';
   document.getElementById('ltCardRow').style.display = byCard ? '' : 'none';
+  if (byCard) onLtCardChange();
+}
+// 신용카드와 체크카드는 돈이 빠지는 시점이 완전히 다르므로, 고르는 순간 그걸 알려준다.
+function onLtCardChange() {
+  const hint = document.getElementById('ltCardHint');
+  if (!hint) return;
+  const card = LT_CARDS.find(c => c.CardID === document.getElementById('ltCard').value);
+  if (!card) { hint.innerHTML = ''; return; }
+  hint.innerHTML = card.CardKind === 'CREDIT'
+    ? '신용카드 — 지금 <b>지출로 기록</b>되고 <b>카드 미결제액이 늘어나요</b>. ' + (card.AccountName || '연결계좌') + ' 잔액은 결제일에 한 번만 빠져요.'
+    : '체크카드 — 지금 바로 ' + (card.AccountName || '연결계좌') + ' 잔액에서 빠져요.';
 }
 function switchLtView(v) {
   document.querySelectorAll('#view-ledger .pill').forEach(b => b.classList.toggle('active', b.dataset.lt === v));
   document.getElementById('ltExp').style.display = v === 'exp' ? '' : 'none';
   document.getElementById('ltTransfer').style.display = v === 'transfer' ? '' : 'none';
   document.getElementById('ltInc').style.display = v === 'inc' ? '' : 'none';
+  document.getElementById('ltCard').style.display = v === 'card' ? '' : 'none';
   document.getElementById('ltBudget').style.display = v === 'budget' ? '' : 'none';
+  if (v === 'card') fetchCardStatus();
 }
 /* 아래 3개 submit 함수는 전부 "낙관적 UI" 패턴: 서버 응답을 기다리지 않고
  * 방금 입력한 내용을 해당 목록에 즉시 반영(회색으로 "저장 중…" 표시)한 다음 폼을
@@ -994,7 +1145,7 @@ async function submitLtExpense() {
     const cat = LT_CATEGORIES.find(c => c.CategoryID === txn.CategoryID);
     const acc = byCard ? LT_CARDS.find(c => c.CardID === txn.CardID) : LT_ACCOUNTS.find(a => a.AccountID === txn.AccountID);
     list.insertAdjacentHTML('afterbegin', '<div id="' + tempId + '">' + txnRowHtml(Object.assign({ _pending: true }, txn, {
-      AccountName: acc ? (byCard ? acc.AccountName : acc.Name) : '',
+      AccountName: acc ? (byCard ? acc.CardName : acc.Name) : '',
       CategoryName: cat ? cat.Name : ''
     })) + '</div>');
   }
@@ -1032,6 +1183,85 @@ async function submitLtIncome() {
     return;
   }
   loadLedger();
+}
+
+/* ---- 카드 탭: 카드 사용 현황 + 카드대금 결제 ----
+ * 여기 나오는 세 숫자는 의미가 전부 다르다. 섞어 보면 안 된다.
+ *   이번 달 사용액 : 이번 달에 카드로 쓴 금액 (지출 통계에 이미 들어가 있음)
+ *   미결제액       : 지금 갚아야 할 카드빚 총액
+ *   결제 예정액    : 이번 결제일에 나갈 것으로 보이는 "추정" 금액
+ * 카드대금을 결제해도 지출이 또 생기지 않는다 — 통장 잔액과 카드빚이 같이 줄 뿐이다.
+ */
+let CARD_STATUS = [];
+async function fetchCardStatus() {
+  const box = document.getElementById('ltCard');
+  if (!box) return;
+  // 홈에서 바로 넘어온 경우엔 가계부 폼이 아직 안 그려졌을 수 있어서, 계좌 목록을 여기서 한 번 확보한다.
+  if (!LT_ACCOUNTS.length) { const r = await api('listAccounts'); if (r.success) LT_ACCOUNTS = r.data; }
+  const args = [todayYm()];
+  const cached = peekApiCache('getCardStatus', args);
+  if (cached) renderCardTab(cached);
+  else box.innerHTML = '<div class="muted" style="padding:20px 0;">불러오는 중...</div>';
+  const res = await api('getCardStatus', args);
+  if (!res.success) { if (!cached) box.innerHTML = '오류: ' + res.message; return; }
+  renderCardTab(res.data);
+}
+function renderCardTab(cards) {
+  CARD_STATUS = cards;
+  const box = document.getElementById('ltCard');
+  if (!box) return;
+  if (!cards.length) {
+    box.innerHTML = '<div class="card"><div class="cardTitle">신용카드</div><div class="emptyState">등록된 신용카드가 없어요.<br>설정 → 카드에서 먼저 등록해 주세요.</div></div>';
+    return;
+  }
+  const payAccounts = LT_ACCOUNTS.filter(a => String(a.AccountClass || '').toUpperCase() !== 'LIABILITY' && String(a.IsLiability) !== 'true');
+  const statusHtml = cards.map(c =>
+    '<div class="card"><div class="cardTitle">💳 ' + c.CardName + '</div>' +
+    '<div class="rowLine"><span>이번 달 사용액</span><span class="amt">' + fmtWon(c.MonthUsage) + '</span></div>' +
+    '<div class="rowLine"><span>현재 미결제액</span><span class="amt" style="color:var(--danger);">' + fmtWon(c.Unpaid) + '</span></div>' +
+    '<div class="rowLine"><span>결제 예정액 <span class="muted">(추정)</span></span><span class="amt">' + fmtWon(c.DueAmount) + '</span></div>' +
+    '<div class="muted" style="margin-top:6px;">청구기간 ' + c.PeriodStart + ' ~ ' + c.PeriodEnd + ' · 결제예정일 ' + c.PayDate + ' · 출금 ' + (c.SettlementAccountName || '-') + '</div>' +
+    (c.PaidThisMonth ? '<div class="muted" style="color:var(--success);margin-top:4px;">이번 달 결제 기록이 있어요.</div>' : '') +
+    '<button class="btn btn-ghost" style="margin-top:10px;" onclick="prefillCardPay(\'' + c.CardID + '\')">이 카드 대금 결제하기</button></div>'
+  ).join('');
+  box.innerHTML = statusHtml +
+    '<div class="card"><div class="cardTitle">카드대금 결제</div>' +
+    '<div class="muted" style="margin-bottom:8px;">카드대금은 <b>지출이 아니라 이체</b>예요. 통장에서 빠지고 카드빚이 같은 금액만큼 줄어요 — 지출로 두 번 잡히지 않아요.</div>' +
+    '<div class="field"><label>카드</label><select id="cpCard" onchange="prefillCardPay()">' +
+    cards.map(c => '<option value="' + c.CardID + '">' + c.CardName + '</option>').join('') + '</select></div>' +
+    '<div class="field"><label>출금계좌</label><select id="cpAccount">' +
+    payAccounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('') + '</select></div>' +
+    '<div class="field"><label>금액</label><input id="cpAmount" type="number"></div>' +
+    '<div class="field"><label>결제일</label><input id="cpDate" type="date" value="' + ymd(new Date()) + '"></div>' +
+    '<div class="field"><label>메모(선택)</label><input id="cpMemo"></div>' +
+    '<button class="btn btn-gold" onclick="submitCardPayment()">카드대금 결제 기록</button></div>';
+  prefillCardPay();
+}
+// 카드를 고르면 그 카드의 미결제액과 출금계좌를 자동으로 채워준다(실제 청구액이 다르면 고쳐서 저장).
+function prefillCardPay(cardId) {
+  const sel = document.getElementById('cpCard');
+  if (!sel) return;
+  if (cardId) sel.value = cardId;
+  const c = CARD_STATUS.find(x => x.CardID === sel.value);
+  if (!c) return;
+  const amt = document.getElementById('cpAmount');
+  amt.value = Math.max(0, Math.round(c.Unpaid || 0)) || '';
+  const accSel = document.getElementById('cpAccount');
+  if (c.SettlementAccountID && Array.from(accSel.options).some(o => o.value === c.SettlementAccountID)) accSel.value = c.SettlementAccountID;
+  if (cardId) document.getElementById('cpAmount').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+async function submitCardPayment() {
+  const cardId = document.getElementById('cpCard').value;
+  const amount = Number(document.getElementById('cpAmount').value);
+  const date = document.getElementById('cpDate').value;
+  const from = document.getElementById('cpAccount').value;
+  const memo = document.getElementById('cpMemo').value;
+  if (!amount) { alert('결제 금액을 입력하세요.'); return; }
+  const res = await api('payCardBill', [cardId, amount, date, from, memo]);
+  if (!res.success) { alert('실패: ' + res.message); return; }
+  alert('카드대금 결제를 기록했어요: ' + fmtWon(amount) + '\n(지출로는 잡히지 않고, 통장과 카드빚만 줄어요)');
+  loadLedger();
+  setTimeout(() => switchLtView('card'), 200);
 }
 
 /* ---- 지출목표(예산) ---- */
@@ -1186,49 +1416,86 @@ async function renderSettingsCards() {
   const box = document.getElementById('settingsBody');
   const cCards = peekApiCache('listCards', []);
   const cAccs = peekApiCache('listAccounts', []);
-  const cPending = peekApiCache('getCardPendingSummary', []);
-  if (cCards && cAccs && cPending) renderSettingsCardsHtml(cCards, cAccs, cPending);
+  if (cCards && cAccs) renderSettingsCardsHtml(cCards, cAccs);
   else box.innerHTML = '<div class="muted">불러오는 중...</div>';
-  const [cardRes, accRes, pendingRes] = await Promise.all([api('listCards'), api('listAccounts'), api('getCardPendingSummary')]);
-  if (!cardRes.success) { if (!(cCards && cAccs && cPending)) box.innerHTML = '오류: ' + cardRes.message; return; }
-  renderSettingsCardsHtml(cardRes.data, accRes.data || [], pendingRes.success ? pendingRes.data : []);
+  const [cardRes, accRes] = await Promise.all([api('listCards'), api('listAccounts')]);
+  if (!cardRes.success) { if (!(cCards && cAccs)) box.innerHTML = '오류: ' + cardRes.message; return; }
+  renderSettingsCardsHtml(cardRes.data, accRes.data || []);
 }
-function renderSettingsCardsHtml(cards, accounts, pending) {
+function renderSettingsCardsHtml(cards, accounts) {
   const box = document.getElementById('settingsBody');
-  const accOpts = accounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
+  const payAccounts = accounts.filter(a => String(a.AccountClass || '').toUpperCase() !== 'LIABILITY' && String(a.IsLiability) !== 'true');
+  const accOpts = payAccounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
   box.innerHTML = '<div class="card"><div class="cardTitle">카드 목록</div>' +
-    cards.map(c => '<div class="rowLine"><span>' + c.CardName + ' (' + c.CardType + (c.BillingDay ? ', 매달 ' + c.BillingDay + '일' : '') + ')</span><span class="muted">' + c.AccountName + '</span></div>').join('') +
+    (cards.map(c => '<div class="rowLine"><span>' + c.CardName +
+      ' <span class="muted">(' + (c.CardKind === 'CREDIT' ? '신용' : '체크') +
+      (c.CardKind === 'CREDIT' && c.BillingDay ? ' · 마감 ' + c.BillingDay + '일' : '') +
+      (c.CardKind === 'CREDIT' && c.PaymentDay ? ' · 결제 ' + c.PaymentDay + '일' : '') + ')</span>' +
+      '<br><span class="muted">' + (c.CardKind === 'CREDIT' ? '대금 출금: ' : '즉시 출금: ') + c.AccountName + '</span></span>' +
+      '<button class="btn-sm btn-danger" onclick="delCardM(\'' + c.CardID + '\')">삭제</button></div>').join('') ||
+      '<div class="emptyState">등록된 카드 없음</div>') +
     '</div><div class="card"><div class="cardTitle">카드 추가</div>' +
     '<div class="field"><label>이름</label><input id="newCardName"></div>' +
     '<div class="field"><label>유형</label><select id="newCardType" onchange="onCardTypeChangeM()"><option>체크</option><option>신용</option></select></div>' +
-    '<div class="field" id="newCardBillingRow" style="display:none;"><label>결제일</label><input id="newCardBilling" type="number" min="1" max="28"></div>' +
-    '<div class="field"><label>결제계좌</label><select id="newCardAccount">' + accOpts + '</select></div>' +
+    '<div id="newCardCreditRows" style="display:none;">' +
+    '<div class="field"><label>청구 마감일(매달 며칠까지 쓴 걸 묶어서 청구하나요)</label><input id="newCardBilling" type="number" min="1" max="28" placeholder="예: 15"></div>' +
+    '<div class="field"><label>결제일(카드대금이 빠지는 날)</label><input id="newCardPayment" type="number" min="1" max="28" placeholder="예: 25"></div></div>' +
+    '<div class="field"><label id="newCardAccountLabel">결제계좌</label><select id="newCardAccount">' + accOpts + '</select></div>' +
     '<div class="field"><label>명의자</label><select id="newCardOwner">' + PROFILES.map(p => '<option value="' + p.ProfileID + '">' + p.Name + '</option>').join('') + '</select></div>' +
-    '<div class="muted" style="margin:6px 0;">신용카드는 쓴 즉시 지출로 기록되지만, 계좌 잔액은 정산할 때까지 안 줄어들어요.</div>' +
+    '<div class="muted" style="margin:6px 0;line-height:1.6;">' +
+    '<b>신용카드</b>: 쓴 순간 지출로 기록되고 카드빚이 늘어요. 통장은 결제일에 <b>한 번만</b> 빠져요(가계부 → 카드 탭에서 결제).<br>' +
+    '<b>체크카드</b>: 쓰는 즉시 연결계좌에서 빠져요.</div>' +
     '<button class="btn btn-gold" onclick="addCardM()">저장</button></div>' +
-    '<div class="card"><div class="cardTitle">카드 정산 (신용카드 미결제분)</div>' +
-    (pending.map(c =>
-      '<div class="rowLine"><span>' + c.CardName + ' <span class="muted">(정산대기 ' + c.Count + '건)</span></span><span class="amt">' + fmtWon(c.Total) +
-      (c.Total > 0 ? ' <button class="btn-sm btn-ghost" onclick="settleCardM(\'' + c.CardID + '\')">정산</button>' : '') + '</span></div>'
-    ).join('') || '<div class="emptyState">신용카드 없음</div>') + '</div>';
+    '<div class="card"><div class="cardTitle">기존 카드 데이터 점검</div>' +
+    '<div class="muted" style="line-height:1.6;">예전 방식으로 기록된 카드 거래(카드 쓸 때 은행잔액을 바로 깎고, 다음 달 카드대금도 또 지출로 잡은 것)가 있는지 확인해요. ' +
+    '<b>점검만으로는 아무것도 바뀌지 않아요.</b> 바꿀지 말지는 결과를 보고 직접 결정하시면 돼요.</div>' +
+    '<button class="btn btn-ghost" style="margin-top:10px;" onclick="checkCardMigrationM()">점검하기</button>' +
+    '<div id="cardMigrationBox" style="margin-top:10px;"></div></div>';
+  onCardTypeChangeM();
 }
 function onCardTypeChangeM() {
-  document.getElementById('newCardBillingRow').style.display = document.getElementById('newCardType').value === '신용' ? '' : 'none';
-}
-async function settleCardM(cardId) {
-  const today = new Date().toISOString().substring(0, 10);
-  const date = prompt('정산(실제 출금) 날짜를 입력하세요', today);
-  if (!date) return;
-  const res = await api('settleCard', [cardId, date]);
-  if (!res.success) { alert('정산 실패: ' + res.message); return; }
-  alert('정산 완료: ' + fmtWon(res.data.Amount));
-  renderSettingsCards();
+  const isCredit = document.getElementById('newCardType').value === '신용';
+  document.getElementById('newCardCreditRows').style.display = isCredit ? '' : 'none';
+  document.getElementById('newCardAccountLabel').innerText = isCredit ? '카드대금이 빠질 계좌' : '즉시 출금될 계좌';
 }
 async function addCardM() {
-  const billing = document.getElementById('newCardBilling') ? document.getElementById('newCardBilling').value : '';
-  const res = await api('addCard', [document.getElementById('newCardOwner').value, document.getElementById('newCardAccount').value, document.getElementById('newCardType').value, document.getElementById('newCardName').value, billing]);
+  const isCredit = document.getElementById('newCardType').value === '신용';
+  const billing = isCredit ? document.getElementById('newCardBilling').value : '';
+  const payment = isCredit ? document.getElementById('newCardPayment').value : '';
+  const res = await api('addCard', [document.getElementById('newCardOwner').value, document.getElementById('newCardAccount').value, document.getElementById('newCardType').value, document.getElementById('newCardName').value, billing, payment]);
   if (!res.success) { alert('실패: ' + res.message); return; }
   renderSettingsCards();
+}
+async function delCardM(cardId) {
+  if (!confirm('이 카드를 삭제할까요?')) return;
+  const res = await api('deleteCard', [cardId]);
+  if (!res.success) { alert(res.message); return; }
+  renderSettingsCards();
+}
+/* 마이그레이션: 읽기(점검)와 쓰기(변환)를 확실히 분리해 뒀다.
+ * 점검은 아무것도 바꾸지 않고, 변환은 확인을 두 번 받은 뒤에만 실행된다. */
+async function checkCardMigrationM() {
+  const box = document.getElementById('cardMigrationBox');
+  box.innerHTML = '<div class="muted">확인 중...</div>';
+  const res = await api('getCardMigrationReport');
+  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
+  const d = res.data;
+  const clean = d.legacyUsage.count === 0 && d.legacySettlement.count === 0;
+  box.innerHTML = clean
+    ? '<div class="muted" style="color:var(--success);">✅ 정리할 옛날 카드 거래가 없어요. 이미 새 방식대로 기록돼 있어요.</div>'
+    : '<div class="rowLine"><span>부채계좌로 옮길 카드 사용 거래</span><span class="amt">' + d.legacyUsage.count + '건 · ' + fmtWon(d.legacyUsage.total) + '</span></div>' +
+      '<div class="rowLine"><span>이체로 바꿀 옛날 \'카드정산\' 지출</span><span class="amt" style="color:var(--danger);">' + d.legacySettlement.count + '건 · ' + fmtWon(d.legacySettlement.total) + '</span></div>' +
+      '<div class="muted" style="margin-top:8px;line-height:1.6;">두 번째 줄은 <b>지출로 두 번 잡혀 있던 금액</b>이에요. 변환하면 이만큼 지출 통계가 줄고, 대신 카드빚이 정확해져요. 계좌 잔액도 같이 다시 계산돼요.</div>' +
+      '<button class="btn btn-danger" style="margin-top:10px;" onclick="applyCardMigrationM()">변환 실행 (되돌리기 어려움)</button>';
+}
+async function applyCardMigrationM() {
+  if (!confirm('기존 카드 거래를 새 구조로 바꿔요. 계좌 잔액도 다시 계산됩니다.\n\n먼저 구글시트를 한 번 복사해두시는 걸 권해요. 계속할까요?')) return;
+  if (!confirm('정말 실행할까요? 이 작업은 자동으로 되돌릴 수 없어요.')) return;
+  const box = document.getElementById('cardMigrationBox');
+  box.innerHTML = '<div class="muted">변환 중... (거래가 많으면 시간이 걸려요)</div>';
+  const res = await api('applyCardMigration');
+  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
+  box.innerHTML = '<div class="muted" style="color:var(--success);">완료 — 카드 사용 거래 ' + res.data.movedUsage + '건 이동, 옛 정산 ' + res.data.convertedSettlement + '건을 이체로 변환했어요.</div>';
 }
 
 async function renderSettingsCategories() {
