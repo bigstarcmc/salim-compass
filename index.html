@@ -228,8 +228,63 @@ async function callApiRaw(url, key, action, args) {
   catch (e) { return { success: false, message: '서버 응답이 JSON이 아니에요(배포 재확인 필요): ' + text.slice(0, 150) }; }
 }
 async function api(action, args = []) {
-  try { return await callApiRaw(CFG.url, CFG.key, action, args); }
+  try {
+    const res = await callApiRaw(CFG.url, CFG.key, action, args);
+    if (res && res.success) {
+      if (API_CACHE_WRITE_ACTIONS.test(action)) {
+        // 방금 쓴 내용이 반영되기 전의 캐시된 화면이 잠깐이라도 먼저 보이는 걸 막기 위해,
+        // 쓰기가 성공하면 어떤 조회 캐시가 영향받는지 일일이 따지지 않고 전체를 비운다.
+        // (그 다음 조회 1번은 캐시 없이 서버를 기다리게 되지만, 방금 액션을 실행한 직후이니
+        // 그 정도 기다림은 자연스럽다 — "내가 방금 한 게 반영 안 됐나?" 하는 혼란보다 낫다.)
+        _clearApiCache();
+      } else {
+        _writeApiCache(action, args, res.data);
+      }
+    }
+    return res;
+  }
   catch (e) { return { success: false, message: '알 수 없는 오류: ' + e.message }; }
+}
+
+/* ================= API 응답 캐시 (cache-first 렌더링) =================
+ * 목적: 화면을 열 때마다 서버 왕복(Apps Script는 구조상 요청당 보통 1초 안팎 걸림)을
+ * 눈으로 보며 기다리지 않도록, "마지막으로 성공했던 응답"을 localStorage에 저장해두고
+ * 화면을 열자마자 그걸로 먼저 그린 다음, 그 사이 최신 데이터를 백그라운드로 받아와서
+ * 다시 그린다. 실제 서버 응답속도는 그대로지만 체감 속도는 크게 좋아진다.
+ * - add/update/delete/confirm/apply/close/settle/create/adjust/set/init 로 시작하는
+ *   "쓰기" 액션은 절대 캐시하지 않는다 — 데이터 정확성이 걸린 곳은 항상 서버 응답을
+ *   그대로 기다린다. 이 캐시는 순수 조회(get/list)에만 쓰인다.
+ * - 캐시가 5분보다 오래됐으면 "먼저 보여주는 용도"로도 쓰지 않는다(너무 오래된 값을
+ *   먼저 보여줬다가 헷갈리는 것보다는, 그 상황에선 그냥 로딩 표시가 낫다고 판단).
+ */
+const API_CACHE_PREFIX = 'apiCache:';
+const API_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const API_CACHE_WRITE_ACTIONS = /^(add|update|delete|confirm|cancel|apply|close|settle|create|adjust|set|init)/i;
+
+function _cacheKey(action, args) { return API_CACHE_PREFIX + action + ':' + JSON.stringify(args || []); }
+
+// 캐시에 있는 "최근 성공 응답의 data"를 즉시 돌려준다. 없거나 너무 오래됐으면 null.
+function peekApiCache(action, args = []) {
+  try {
+    const raw = localStorage.getItem(_cacheKey(action, args));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.ts > API_CACHE_MAX_AGE_MS) return null;
+    return parsed.data;
+  } catch (e) { return null; }
+}
+
+function _writeApiCache(action, args, data) {
+  try { localStorage.setItem(_cacheKey(action, args), JSON.stringify({ data: data, ts: Date.now() })); }
+  catch (e) { /* 저장공간이 꽉 찼거나 등 — 캐시는 있으면 좋고 없어도 정상 동작해야 하므로 조용히 무시 */ }
+}
+
+function _clearApiCache() {
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.indexOf(API_CACHE_PREFIX) === 0)
+      .forEach(k => localStorage.removeItem(k));
+  } catch (e) { /* 무시 */ }
 }
 
 function openOwnerPicker() { /* 이제 상단 스코프바에서 직접 선택 — 더 이상 사용 안 함 */ }
@@ -304,7 +359,7 @@ function closeSheet() { document.getElementById('sheetOverlay').classList.remove
 let homePeriod = 'thisMonth';
 function loadHome() {
   const el = document.getElementById('view-home');
-  el.innerHTML = '<div class="pillTabs" id="homePills"></div><div id="homeContent" class="muted" style="padding:20px 0;">불러오는 중...</div>';
+  el.innerHTML = '<div class="pillTabs" id="homePills"></div><div id="homeContent"></div>';
   document.getElementById('homePills').innerHTML = ['thisMonth:이번달', 'lastMonth:지난달', 'last3:최근3개월', 'thisYear:올해'].map(p => {
     const [k, label] = p.split(':');
     return '<button class="pill' + (k === homePeriod ? ' active' : '') + '" onclick="setHomePeriod(\'' + k + '\')">' + label + '</button>';
@@ -322,10 +377,18 @@ function periodRange(preset) {
 }
 async function fetchHome() {
   const [start, end] = periodRange(homePeriod);
-  const res = await api('getHomeSummary', [start, end, SCOPE]);
+  const args = [start, end, SCOPE];
   const box = document.getElementById('homeContent');
-  if (!res.success) { box.innerHTML = '오류: ' + res.message; return; }
-  const d = res.data;
+  // 캐시-먼저: 마지막으로 봤던 홈 화면이 있으면 네트워크를 기다리지 않고 즉시 그린다.
+  const cached = peekApiCache('getHomeSummary', args);
+  if (cached) renderHomeBox(box, cached);
+  else box.innerHTML = '<div class="muted" style="padding:20px 0;">불러오는 중...</div>';
+
+  const res = await api('getHomeSummary', args);
+  if (!res.success) { if (!cached) box.innerHTML = '오류: ' + res.message; return; }
+  renderHomeBox(box, res.data); // 최신 데이터로 조용히 다시 그림(캐시로 이미 보여줬어도 항상 최신값으로 갱신)
+}
+function renderHomeBox(box, d) {
   const netColor = d.netCashflow >= 0 ? '#8fe3b3' : '#f3a9a3';
   let html = '<div class="cardHero"><div class="heroLabel">순현금흐름 (실제 확정된 거래 기준)</div>' +
     '<div class="heroNumber" style="color:' + netColor + ';">' + (d.netCashflow >= 0 ? '+' : '') + fmtWon(d.netCashflow) + '</div>' +
@@ -440,9 +503,16 @@ async function fetchCalendar() {
   document.getElementById('calAllTeamsView').style.display = allTeams ? '' : 'none';
   // 근무배경/내조는 항상 진한 기준으로 통일(가족 일정이 그의 교대에 맞춰지므로).
   // 일정(휴가/대근 등)은 스코프와 무관하게 늘 가족 전체가 같이 봄 — 굳이 나눌 이유가 없어서.
-  const res = await api('getCalendarView', [primaryOwnerId(), calYm(), allTeams]);
-  if (!res.success) { document.getElementById('calGrid').innerText = '오류: ' + res.message; return; }
-  const d = res.data;
+  const args = [primaryOwnerId(), calYm(), allTeams];
+  const cached = peekApiCache('getCalendarView', args);
+  if (cached) renderCalendarData(cached, allTeams);
+  else document.getElementById('calGrid').innerHTML = '<div class="muted" style="padding:20px 0;">불러오는 중...</div>';
+
+  const res = await api('getCalendarView', args);
+  if (!res.success) { if (!cached) document.getElementById('calGrid').innerText = '오류: ' + res.message; return; }
+  renderCalendarData(res.data, allTeams);
+}
+function renderCalendarData(d, allTeams) {
   document.getElementById('myTeamBox').innerHTML =
     '<div class="myTeamChip"><span>🧭 내 조: ' + (d.currentTeam || '미설정') + '</span><span id="payrollTickerInline">불러오는 중...</span></div>';
   if (allTeams) renderAllTeamsView(d.shifts); else renderCalGrid(d.shifts, d.events);
@@ -455,7 +525,10 @@ async function fetchPayrollTicker(primaryPayrollEstimate) {
   if (!el) return;
   const primaryId = primaryOwnerId();
   if (SCOPE !== 'shared' && SCOPE !== primaryId) {
-    const res = await api('getPayrollEstimate', [SCOPE, todayYm()]);
+    const args = [SCOPE, todayYm()];
+    const cached = peekApiCache('getPayrollEstimate', args);
+    if (cached) el.innerHTML = '💰 ' + profileName(SCOPE) + ' 예상 월급 <b>' + fmtWon(cached.estimated) + '</b>';
+    const res = await api('getPayrollEstimate', args);
     const amt = res.success ? res.data.estimated : null;
     el.innerHTML = amt !== null ? '💰 ' + profileName(SCOPE) + ' 예상 월급 <b>' + fmtWon(amt) + '</b>' : '';
     return;
@@ -692,16 +765,26 @@ async function submitQuickEvent() {
 async function loadPayroll() {
   const el = document.getElementById('view-payroll');
   if (!PROFILES.length) { const r = await api('listProfiles'); if (r.success) PROFILES = r.data; }
-  el.innerHTML = '<div id="payrollContent" class="muted" style="padding:20px 0;">불러오는 중...</div>';
   const targets = SCOPE === 'shared' ? PROFILES : PROFILES.filter(p => p.ProfileID === SCOPE);
+  el.innerHTML = '<div id="payrollContent" class="muted" style="padding:20px 0;">불러오는 중...</div>';
   const box = document.getElementById('payrollContent');
+
+  // 캐시-먼저: 모든 대상 프로필의 급여 데이터가 캐시에 있으면 즉시 그리고, 백그라운드로 최신값을 받아온다.
+  const cachedHtmls = targets.map(p => {
+    const cached = peekApiCache('getPayrollPageData', [p.ProfileID, todayYm()]);
+    return cached ? renderPayrollCardHtml(p, cached) : null;
+  });
+  if (cachedHtmls.every(h => h !== null)) box.innerHTML = cachedHtmls.join('');
+
   const htmls = await Promise.all(targets.map(p => renderPayrollCard(p)));
   box.innerHTML = htmls.join('');
 }
 async function renderPayrollCard(profile) {
   const res = await api('getPayrollPageData', [profile.ProfileID, todayYm()]);
   if (!res.success) return '<div class="card">오류: ' + res.message + '</div>';
-  const d = res.data;
+  return renderPayrollCardHtml(profile, res.data);
+}
+function renderPayrollCardHtml(profile, d) {
   if (d.needsInit) return '<div class="card"><div class="cardTitle">' + profile.Name + '</div><div class="emptyState">급여 설정이 없어요. 설정 탭에서 등록하세요.</div></div>';
   const est = d.estimate;
   const oid = profile.ProfileID;
@@ -1140,11 +1223,17 @@ async function submitTeamM() {
 }
 async function loadSavings() {
   const el = document.getElementById('view-savings');
-  el.innerHTML = '<div class="muted" style="padding:20px 0;">불러오는 중...</div>';
+  const cached = peekApiCache('listSavingsGoals', []);
+  if (cached) renderSavingsBox(el, cached);
+  else el.innerHTML = '<div class="muted" style="padding:20px 0;">불러오는 중...</div>';
+
   const res = await api('listSavingsGoals');
-  if (!res.success) { el.innerHTML = '오류: ' + res.message; return; }
+  if (!res.success) { if (!cached) el.innerHTML = '오류: ' + res.message; return; }
+  renderSavingsBox(el, res.data);
+}
+function renderSavingsBox(el, data) {
   el.innerHTML = '<div class="card"><div class="cardTitle">저축목표</div>' +
-    (res.data.map(g => {
+    (data.map(g => {
       const pct = Math.min(100, Math.round(g.Progress * 100));
       return '<div style="margin-bottom:14px;"><div class="rowLine"><span>' + g.Name + '</span><span>' + pct + '%</span></div>' +
         '<div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:var(--gold);"></div></div>' +
