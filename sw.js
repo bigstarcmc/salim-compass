@@ -13,7 +13,7 @@
 // stale-while-revalidate: 캐시가 있으면 그걸 즉시 보여주고, 그와 동시에 백그라운드로
 // 최신 버전을 받아서 캐시를 갱신합니다. 즉 "코드를 고쳐도 반영이 영원히 안 되는" 문제는
 // 생기지 않습니다 — 늦어도 그 다음 실행부터는 최신 버전이 보입니다.
-const SHELL_CACHE = 'salim-shell-v2'; // 신용카드 구조 개편(4차) 반영 — 버전을 올리면 이전 껍데기 캐시가 자동 정리됨
+const SHELL_CACHE = 'salim-shell-v3'; // 5차(현금결제·카드종류 구분·캘린더 점) 반영
 const SHELL_URLS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon-180.png'];
 
 self.addEventListener('install', (e) => {
