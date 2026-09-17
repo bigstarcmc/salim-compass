@@ -129,7 +129,7 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .today{outline:2px solid var(--ink);}
 .bg-주{background:#FBF0D3;} .bg-야{background:#E6E9F5;} .bg-휴{background:#F5F3EC;}
 .b-주{background:var(--day); color:#4A3200;} .b-야{background:var(--night);} .b-휴{background:transparent; color:var(--danger); font-size:10px;}
-.b-휴가{background:#3BA36A;} .b-대근주간{background:#C026D3;} .b-대근야간{background:#581C87;}
+.b-휴가{background:#3BA36A;} .b-대근주간{background:#C026D3;} .b-대근야간{background:#581C87;} .b-지정휴무{background:#0D9488;}
 .b-교육{background:#2F6FED;} .b-건강검진{background:#0E93A8;} .b-개인일정{background:#6B7280;}
 
 /* 달력 칸에는 글씨를 최소로만 넣는다 — 휴가/대근만 글자로 눈에 띄고,
@@ -614,6 +614,7 @@ function jumpTo(view, sub) {
   if (sub === 'exp') setTimeout(() => switchLtView('exp'), 150);
   if (sub === 'card') setTimeout(() => switchLtView('card'), 150);
   if (sub === 'ai') setTimeout(() => switchSettingsSub('ai'), 150);
+  if (sub === 'payguide') setTimeout(() => switchSettingsSub('payguide'), 150);
 }
 
 /* ================= 캘린더 ================= */
@@ -744,18 +745,20 @@ function renderCalGrid(shifts, events) {
     const num = Number(dateStr.split('-')[2]);
     const dayEvents = events.filter(e => e.EventDate === dateStr);
 
-    // 글자로 보여주는 건 딱 두 가지 — 휴가와 대근. 이 둘은 근무/돈이 직접 바뀌는 일이라
+    // 글자로 보여주는 건 세 가지 — 휴가·대근·지정휴무. 전부 근무/급여가 직접 바뀌는 일이라
     // 달력을 훑을 때 바로 보여야 한다. 나머지(교육/건강검진/개인일정)는 색 점으로만.
     let badgeCls = 'b-' + type, badgeText = type;
     const swap = dayEvents.find(e => e.Type === '대근');
     const vac = dayEvents.find(e => e.Type === '휴가');
+    const drest = dayEvents.find(e => e.Type === '지정휴무');
     if (swap) {
       const night = swap.SwapDirection === '야간';
       badgeCls = night ? 'b-대근야간' : 'b-대근주간';
       badgeText = night ? '대근야' : '대근주';
     } else if (vac) { badgeCls = 'b-휴가'; badgeText = '휴가'; }
+    else if (drest) { badgeCls = 'b-지정휴무'; badgeText = '지정휴무'; }
 
-    const others = dayEvents.filter(e => e !== swap && e !== vac);
+    const others = dayEvents.filter(e => e !== swap && e !== vac && e !== drest);
     const dots = others.slice(0, 3).map(e =>
       '<span class="evDot" style="background:' + (EV_COLOR[e.Type] || '#6B7280') + ';"></span>').join('') +
       (others.length > 3 ? '<span class="evMore">+' + (others.length - 3) + '</span>' : '');
@@ -889,7 +892,7 @@ async function showAddEventForm() {
   const box = document.getElementById('addFormBox');
   box.innerHTML =
     ownerSelectHtml('qOwner') +
-    '<div class="field"><label>유형</label><select id="qEvType" onchange="qToggleFields()"><option>휴가</option><option>대근</option><option>건강검진</option><option>교육</option><option>개인일정</option></select></div>' +
+    '<div class="field"><label>유형</label><select id="qEvType" onchange="qToggleFields()"><option>휴가</option><option>대근</option><option>지정휴무</option><option>건강검진</option><option>교육</option><option>개인일정</option></select></div>' +
     '<div class="field" id="qLeaveRow"><label>휴가코드</label><select id="qLeaveCode"><option value="">선택안함</option></select></div>' +
     '<div class="field" id="qSwapRow" style="display:none;"><label>대근 근무유형</label><select id="qSwapType"><option value="주간">주간대근</option><option value="야간">야간대근</option></select></div>' +
     '<div class="field"><label>메모</label><input id="qMemo"></div>' +
@@ -939,10 +942,11 @@ async function submitQuickJournal(entryType) {
   refreshDaySheet();
 }
 function qToggleFields() {
-  const isSwap = document.getElementById('qEvType').value === '대근';
-  const isPersonal = document.getElementById('qEvType').value === '개인일정';
+  const val = document.getElementById('qEvType').value;
+  const isSwap = val === '대근';
+  const noLeaveCode = isSwap || val === '개인일정' || val === '지정휴무';
   document.getElementById('qSwapRow').style.display = isSwap ? '' : 'none';
-  document.getElementById('qLeaveRow').style.display = (isSwap || isPersonal) ? 'none' : '';
+  document.getElementById('qLeaveRow').style.display = noLeaveCode ? 'none' : '';
 }
 async function submitQuickEvent() {
   const type = document.getElementById('qEvType').value;
@@ -1001,27 +1005,193 @@ function renderPayrollCardHtml(profile, d) {
   const est = d.estimate;
   const oid = profile.ProfileID;
   const detailId = 'payDetail-' + oid;
+  const itemsId = 'payItems-' + oid;
+  const configId = 'payConfig-' + oid;
+  PAY_ITEMS_CACHE[oid] = { extra: d.extraItems || [], deduction: d.deductionItems || [] };
   return '<div class="card">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="togglePayDetail(\'' + detailId + '\')">' +
     '<div><div class="cardTitle" style="margin-bottom:2px;">' + profile.Name + '</div><div style="font-size:22px;font-weight:800;">' + fmtWon(est.estimated) + '</div><div class="muted">실수령 추정</div></div>' +
     '<span id="' + detailId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 항목보기</span></div>' +
     '<div id="' + detailId + '" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">' +
-    '<div class="muted" style="margin-bottom:6px;">' + est.periodStart + ' ~ ' + est.periodEnd + ' → ' + est.payMonth + ' 지급</div>' +
-    est.lineItems.map(it => {
+    '<div class="muted" style="margin-bottom:6px;">' + est.periodStart + ' ~ ' + est.periodEnd + ' → ' + est.payMonth + ' 지급 · <span style="text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();jumpTo(\'settings\',\'payguide\')">항목 설명 보기</span></div>' +
+    est.lineItems.map((it, idx) => {
       const neg = it.amount < 0;
-      return '<div class="rowLine"><span' + (neg ? ' style="color:var(--danger);"' : '') + '>' + it.label + '</span><span class="amt"' + (neg ? ' style="color:var(--danger);"' : '') + '>' + (neg ? '-' : '') + fmtWon(Math.abs(it.amount)) + '</span></div>';
+      const rowId = 'payline-' + oid + '-' + idx;
+      return '<div class="rowLine" style="flex-direction:column;align-items:stretch;' + (it.desc ? 'cursor:pointer;' : '') + '"' + (it.desc ? ' onclick="togglePayLineDesc(\'' + rowId + '\')"' : '') + '>' +
+        '<div style="display:flex;justify-content:space-between;"><span' + (neg ? ' style="color:var(--danger);"' : '') + '>' + it.label + (it.desc ? ' <span class="muted">ⓘ</span>' : '') + '</span><span class="amt"' + (neg ? ' style="color:var(--danger);"' : '') + '>' + (neg ? '-' : '') + fmtWon(Math.abs(it.amount)) + '</span></div>' +
+        (it.desc ? '<div id="' + rowId + '" class="muted" style="display:none;font-size:12px;margin-top:4px;line-height:1.5;">' + it.desc + '</div>' : '') +
+        '</div>';
     }).join('') +
     '</div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;margin-top:10px;" onclick="togglePayDetail(\'' + itemsId + '\')">' +
+    '<span class="cardTitle" style="margin:0;">급여 항목 관리</span>' +
+    '<span id="' + itemsId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 펼치기</span></div>' +
+    '<div id="' + itemsId + '" style="display:none;margin-top:10px;">' + renderPayItemsBoxHtml(oid) + '</div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;margin-top:10px;" onclick="togglePayDetail(\'' + configId + '\')">' +
+    '<span class="cardTitle" style="margin:0;">기본 급여 설정</span>' +
+    '<span id="' + configId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 펼치기</span></div>' +
+    '<div id="' + configId + '" style="display:none;margin-top:10px;">' + renderPayConfigBoxHtml(oid, est.config) + '</div>' +
     '<div class="muted" style="margin-top:10px;">' + (d.confirmedSalary ? '이미 확정됨: ' + fmtWon(d.confirmedSalary.ConfirmedAmount) : '이번 달 아직 확정 안 함') + '</div>' +
     '<div class="field"><label>실제 입금액</label><input id="payConfirmAmount-' + oid + '" type="number"></div>' +
     '<button class="btn btn-gold" onclick="submitPayrollConfirm(\'' + oid + '\')">확정 입력</button></div>';
+}
+function togglePayLineDesc(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+// 직무기준급이 바뀌면(승진/연봉조정 등) 여기서 한 번만 고치면, 그걸로 계산되는 연장/야간/
+// 가산/지정휴무일수당까지 전부 같이 바뀐다(통상임금이 직무기준급 등에서 자동 계산되므로).
+function renderPayConfigBoxHtml(oid, cfg) {
+  const num = (v, d) => (v !== '' && v !== undefined && v !== null && !isNaN(Number(v))) ? Number(v) : d;
+  return '<div class="muted" style="margin-bottom:8px;line-height:1.5;">여기 값을 바꾸면 연장·야간·가산·지정휴무일수당까지 자동으로 같이 계산돼요. 직무기준급이 오르면 이 칸만 고치면 됩니다.</div>' +
+    '<div class="field"><label>직무기준급(원)</label><input id="cfgBasePay-' + oid + '" type="number" value="' + num(cfg.BasePay, 0) + '"></div>' +
+    '<div class="field"><label>중식비(원)</label><input id="cfgMeal-' + oid + '" type="number" value="' + num(cfg.MealAllowance, 0) + '"></div>' +
+    '<div class="field"><label>자기설계지원금(원)</label><input id="cfgSelfDesign-' + oid + '" type="number" value="' + num(cfg.SelfDesignSupport, 0) + '"></div>' +
+    '<div class="field"><label>직무환경수당(원)</label><input id="cfgJobEnv-' + oid + '" type="number" value="' + num(cfg.JobEnvAllowance, 0) + '"></div>' +
+    '<div class="field"><label>교대근무수당 비율(%, 보통 8)</label><input id="cfgShiftRate-' + oid + '" type="number" step="0.01" value="' + (num(cfg.ShiftAllowanceRate, 0) * 100) + '"></div>' +
+    '<div class="field"><label>업적급 비율(%, 세전 기준)</label><input id="cfgPerfRate-' + oid + '" type="number" step="0.01" value="' + (num(cfg.PerformancePayRate, 0) * 100) + '"></div>' +
+    '<div class="field"><label>경영성과금 비율(%)</label><input id="cfgMgmtRate-' + oid + '" type="number" step="0.01" value="' + (num(cfg.ManagementBonusRate, 0) * 100) + '"></div>' +
+    '<div style="font-weight:700;margin:14px 0 4px;">통상임금·대근·지정휴무 계산값</div>' +
+    '<div class="field"><label>통상임금 보정계수(기본 1 — 실제 명세서와 안 맞으면 조정)</label><input id="cfgCalib-' + oid + '" type="number" step="0.0001" value="' + num(cfg.OrdinaryWageCalibration, 1) + '"></div>' +
+    '<div class="field"><label>분기당 지정휴무일수(기본 2)</label><input id="cfgRestDays-' + oid + '" type="number" value="' + num(cfg.DesignatedRestDaysPerQuarter, 2) + '"></div>' +
+    '<div class="field"><label>지정휴무일 시간(기본 12)</label><input id="cfgRestHours-' + oid + '" type="number" value="' + num(cfg.DesignatedRestHours, 12) + '"></div>' +
+    '<div class="field"><label>야간대근 총 시간(기본 12)</label><input id="cfgSwapNightTotal-' + oid + '" type="number" value="' + num(cfg.SwapNightTotalHours, 12) + '"></div>' +
+    '<div class="field"><label>야간대근 중 야간대 시간(기본 8)</label><input id="cfgSwapNightNight-' + oid + '" type="number" value="' + num(cfg.SwapNightNightHours, 8) + '"></div>' +
+    '<div class="field"><label>주간대근 총 시간(기본 12)</label><input id="cfgSwapDayTotal-' + oid + '" type="number" value="' + num(cfg.SwapDayTotalHours, 12) + '"></div>' +
+    '<button class="btn btn-gold" onclick="savePayConfigM(\'' + oid + '\')">저장</button>';
+}
+async function savePayConfigM(oid) {
+  const patch = {
+    BasePay: Number(document.getElementById('cfgBasePay-' + oid).value),
+    MealAllowance: Number(document.getElementById('cfgMeal-' + oid).value),
+    SelfDesignSupport: Number(document.getElementById('cfgSelfDesign-' + oid).value),
+    JobEnvAllowance: Number(document.getElementById('cfgJobEnv-' + oid).value),
+    ShiftAllowanceRate: Number(document.getElementById('cfgShiftRate-' + oid).value) / 100,
+    PerformancePayRate: Number(document.getElementById('cfgPerfRate-' + oid).value) / 100,
+    ManagementBonusRate: Number(document.getElementById('cfgMgmtRate-' + oid).value) / 100,
+    OrdinaryWageCalibration: Number(document.getElementById('cfgCalib-' + oid).value) || 1,
+    DesignatedRestDaysPerQuarter: Number(document.getElementById('cfgRestDays-' + oid).value),
+    DesignatedRestHours: Number(document.getElementById('cfgRestHours-' + oid).value),
+    SwapNightTotalHours: Number(document.getElementById('cfgSwapNightTotal-' + oid).value),
+    SwapNightNightHours: Number(document.getElementById('cfgSwapNightNight-' + oid).value),
+    SwapDayTotalHours: Number(document.getElementById('cfgSwapDayTotal-' + oid).value)
+  };
+  const res = await api('updateSalaryConfigFields', [oid, patch]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  loadPayroll();
 }
 function togglePayDetail(id) {
   const box = document.getElementById(id);
   const arrow = document.getElementById(id + '-arrow');
   const open = box.style.display !== 'none';
   box.style.display = open ? 'none' : '';
-  arrow.innerText = open ? '▸ 항목보기' : '▾ 접기';
+  arrow.innerText = open ? (id.indexOf('payItems-') === 0 ? '▸ 펼치기' : '▸ 항목보기') : '▾ 접기';
+}
+/* ---- 급여 항목(추가수당/공제항목) 관리: 수정·추가·삭제·순서변경 ----
+ * getPayrollPageData 응답에 이미 extraItems/deductionItems가 들어있어서 별도 조회 없이
+ * 바로 렌더링한다. 순서변경은 서버에 Order 컬럼을 두고 바로 옆 항목과 맞바꾸는 방식(▲▼). */
+let PAY_ITEMS_CACHE = {};
+function payItemValueLabel(it, kind) {
+  if (kind === 'extra') return fmtWon(it.Amount);
+  const hasAmt = it.Amount !== '' && it.Amount !== undefined && it.Amount !== null && !isNaN(Number(it.Amount)) && Number(it.Amount) !== 0;
+  return hasAmt ? fmtWon(it.Amount) : (Math.round(Number(it.Rate || 0) * 1000) / 10) + '%';
+}
+function payItemRowHtml(it, kind, oid) {
+  const period = (it.StartMonth || it.EndMonth) ? ' <span class="muted">(' + (it.StartMonth || '~') + ' ~ ' + (it.EndMonth || '계속') + ')</span>' : '';
+  return '<div class="listRow" id="payitem-' + it.ItemID + '">' +
+    '<div class="listMain"><span>' + it.Label + period + '</span><span class="amt">' + payItemValueLabel(it, kind) + '</span></div>' +
+    '<div class="listSub"><span></span><span class="iconActions">' +
+    '<span class="iconBtn" onclick="movePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\',\'up\')" title="위로">⬆️</span>' +
+    '<span class="iconBtn" onclick="movePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\',\'down\')" title="아래로">⬇️</span>' +
+    '<span class="iconBtn" onclick="editPayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\')" title="수정">✏️</span>' +
+    '<span class="iconBtn danger" style="color:var(--danger);" onclick="deletePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\')" title="삭제">🗑️</span>' +
+    '</span></div></div>';
+}
+function renderPayItemsListHtml(oid, kind) {
+  const list = (PAY_ITEMS_CACHE[oid] && PAY_ITEMS_CACHE[oid][kind]) || [];
+  return list.map(it => payItemRowHtml(it, kind, oid)).join('') || '<div class="emptyState">없음</div>';
+}
+function renderPayItemsBoxHtml(oid) {
+  return '<div style="font-weight:700;margin-bottom:4px;">추가 항목 <span class="muted" style="font-weight:400;">(수당 등, 금액을 그대로 더함)</span></div>' +
+    '<div id="payExtraList-' + oid + '">' + renderPayItemsListHtml(oid, 'extra') + '</div>' +
+    '<div class="field" style="margin-top:10px;"><label>이름</label><input id="newExtraLabel-' + oid + '" placeholder="예: 성과급"></div>' +
+    '<div class="field"><label>금액(원)</label><input id="newExtraAmount-' + oid + '" type="number"></div>' +
+    '<div class="field"><label>메모(선택)</label><input id="newExtraNote-' + oid + '"></div>' +
+    '<button class="btn-sm btn-ghost" onclick="addPayItemM(\'extra\',\'' + oid + '\')">추가 항목 넣기</button>' +
+    '<div style="font-weight:700;margin:18px 0 4px;">공제 항목 <span class="muted" style="font-weight:400;">(세금·보험·조합비 등)</span></div>' +
+    '<div id="payDeductionList-' + oid + '">' + renderPayItemsListHtml(oid, 'deduction') + '</div>' +
+    '<div class="field" style="margin-top:10px;"><label>이름</label><input id="newDeductLabel-' + oid + '" placeholder="예: 노동조합비"></div>' +
+    '<div class="field"><label>고정 금액(원, 매달 같은 금액이면 이쪽)</label><input id="newDeductAmount-' + oid + '" type="number"></div>' +
+    '<div class="field"><label>또는 비율(%, 세전총액 대비 — 금액/비율 중 하나만)</label><input id="newDeductRate-' + oid + '" type="number" step="0.01" placeholder="예: 4.5"></div>' +
+    '<button class="btn-sm btn-ghost" onclick="addPayItemM(\'deduction\',\'' + oid + '\')">공제 항목 넣기</button>';
+}
+function editPayItemM(kind, oid, itemId) {
+  const list = (PAY_ITEMS_CACHE[oid] && PAY_ITEMS_CACHE[oid][kind]) || [];
+  const it = list.find(x => x.ItemID === itemId);
+  const row = document.getElementById('payitem-' + itemId);
+  if (!it || !row) return;
+  const valueField = kind === 'extra'
+    ? '<div class="field" style="margin:4px 0;"><label>금액(원)</label><input id="eItemAmount-' + itemId + '" type="number" value="' + (it.Amount || 0) + '"></div>'
+    : '<div class="field" style="margin:4px 0;"><label>고정 금액(원)</label><input id="eItemAmount-' + itemId + '" type="number" value="' + (it.Amount || '') + '"></div>' +
+      '<div class="field" style="margin:4px 0;"><label>또는 비율(%)</label><input id="eItemRate-' + itemId + '" type="number" step="0.01" value="' + (it.Rate ? Math.round(Number(it.Rate) * 10000) / 100 : '') + '"></div>';
+  row.outerHTML = '<div class="listRow" id="payitem-' + itemId + '">' +
+    '<div class="field" style="margin:4px 0;"><label>이름</label><input id="eItemLabel-' + itemId + '" value="' + it.Label.replace(/"/g, '&quot;') + '"></div>' +
+    valueField +
+    '<div class="field" style="margin:4px 0;"><label>시작월(선택, YYYY-MM)</label><input id="eItemStart-' + itemId + '" value="' + (it.StartMonth || '') + '"></div>' +
+    '<div class="field" style="margin:4px 0;"><label>종료월(선택, YYYY-MM)</label><input id="eItemEnd-' + itemId + '" value="' + (it.EndMonth || '') + '"></div>' +
+    '<div><button class="btn-sm btn-gold" onclick="savePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + itemId + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="loadPayroll()">취소</button></div></div>';
+}
+async function savePayItemM(kind, oid, itemId) {
+  const patch = {
+    Label: document.getElementById('eItemLabel-' + itemId).value,
+    StartMonth: document.getElementById('eItemStart-' + itemId).value,
+    EndMonth: document.getElementById('eItemEnd-' + itemId).value
+  };
+  if (kind === 'extra') {
+    patch.Amount = Number(document.getElementById('eItemAmount-' + itemId).value);
+  } else {
+    const amtVal = document.getElementById('eItemAmount-' + itemId).value;
+    const rateVal = document.getElementById('eItemRate-' + itemId).value;
+    patch.Amount = amtVal ? Number(amtVal) : '';
+    patch.Rate = rateVal ? Number(rateVal) / 100 : '';
+  }
+  const action = kind === 'extra' ? 'updateSalaryExtraItem' : 'updateSalaryDeductionItem';
+  const res = await api(action, [itemId, patch]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  loadPayroll();
+}
+async function addPayItemM(kind, oid) {
+  if (kind === 'extra') {
+    const label = document.getElementById('newExtraLabel-' + oid).value;
+    const amount = Number(document.getElementById('newExtraAmount-' + oid).value);
+    const note = document.getElementById('newExtraNote-' + oid).value;
+    if (!label.trim()) { alert('이름을 입력하세요.'); return; }
+    const res = await api('addSalaryExtraItem', [oid, label, amount, '', '', note]);
+    if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  } else {
+    const label = document.getElementById('newDeductLabel-' + oid).value;
+    const amount = document.getElementById('newDeductAmount-' + oid).value;
+    const ratePct = document.getElementById('newDeductRate-' + oid).value;
+    if (!label.trim()) { alert('이름을 입력하세요.'); return; }
+    if (!amount && !ratePct) { alert('고정 금액이나 비율 중 하나는 입력하세요.'); return; }
+    const res = await api('addSalaryDeductionItem', [oid, label, ratePct ? Number(ratePct) / 100 : '', '', '', amount ? Number(amount) : '']);
+    if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  }
+  loadPayroll();
+}
+async function deletePayItemM(kind, oid, itemId) {
+  if (!confirm('이 항목을 삭제할까요?')) return;
+  const action = kind === 'extra' ? 'deleteSalaryExtraItem' : 'deleteSalaryDeductionItem';
+  const res = await api(action, [itemId]);
+  if (!res.success) { alert(res.message); return; }
+  loadPayroll();
+}
+async function movePayItemM(kind, oid, itemId, direction) {
+  const action = kind === 'extra' ? 'updateSalaryExtraItemOrder' : 'updateSalaryDeductionItemOrder';
+  const res = await api(action, [oid, itemId, direction]);
+  if (!res.success) { alert(res.message); return; }
+  loadPayroll();
 }
 async function submitPayrollConfirm(ownerId) {
   const amount = Number(document.getElementById('payConfirmAmount-' + ownerId).value);
@@ -1605,7 +1775,7 @@ function loadSettings() {
   const el = document.getElementById('view-settings');
   el.innerHTML =
     '<div class="segTabs" style="flex-wrap:wrap;">' +
-    ['account:계좌', 'card:카드', 'category:카테고리', 'leave:휴가코드', 'recurring:고정지출', 'team:근무조', 'ai:AI 비서'].map(p => {
+    ['account:계좌', 'card:카드', 'category:카테고리', 'leave:휴가코드', 'recurring:고정지출', 'team:근무조', 'ai:AI 비서', 'payguide:급여 설명서'].map(p => {
       const [k, label] = p.split(':');
       return '<button class="segBtn' + (k === SETTINGS_SUB ? ' active' : '') + '" data-sub="' + k + '" style="flex:0 0 auto;padding:8px 14px;" onclick="switchSettingsSub(\'' + k + '\')">' + label + '</button>';
     }).join('') + '</div>' +
@@ -1633,6 +1803,24 @@ function renderSettingsSub() {
   if (SETTINGS_SUB === 'recurring') renderSettingsRecurring();
   if (SETTINGS_SUB === 'team') renderSettingsTeam();
   if (SETTINGS_SUB === 'ai') renderSettingsAI();
+  if (SETTINGS_SUB === 'payguide') renderSettingsPayGuide();
+}
+function renderSettingsPayGuide() {
+  const box = document.getElementById('settingsBody');
+  const item = (title, body) => '<div style="margin-bottom:14px;"><div style="font-weight:700;margin-bottom:2px;">' + title + '</div><div class="muted" style="line-height:1.6;">' + body + '</div></div>';
+  box.innerHTML = '<div class="card"><div class="cardTitle">급여 설명서</div>' +
+    '<div class="muted" style="margin-bottom:14px;line-height:1.6;">포스코 교대근무직 급여명세서를 참고해서 정리했어요. 정확한 규정은 직군(E/S 등)마다 조금씩 다를 수 있지만, 큰 구조(법정수당 가산율, 지정휴무일수당 등)는 비슷합니다. 회사 규정과 다른 부분을 발견하면 급여 탭 → 기본 급여 설정에서 숫자를 조정해주세요.</div>' +
+    item('직무기준급', '기초급 + 가산급(전년도 평가로 연 2회 누적) + 조정분 + 보전급으로 구성된 기본 임금. 이 앱의 모든 시간당 수당 계산의 출발점입니다.') +
+    item('통상임금', '연장·야간·가산·지정휴무일수당을 계산할 때 기준이 되는 시급. 직무기준급 등 정기적으로 받는 항목들의 합을 209시간(근로기준법 월 소정근로시간)으로 나눠서 구합니다.') +
+    item('연장근무수당 (150%)', '소정 근로시간을 초과한 근무(대근, 근무일에 쓴 교육/휴가 등)에 통상임금의 150%를 지급합니다.') +
+    item('야간근무수당 (50% 가산)', '22시~06시 사이에 근무하면 통상임금의 50%를 추가로 얹어줍니다. 연장·휴일근무와 겹쳐도 각각 따로 가산됩니다(중복 가산).') +
+    item('연장가산근무수당', '연장근로와 야간근로가 동시에 겹치는 시간에 대한 추가 가산분. 주로 야간 대근처럼 예정에 없던 근무가 심야시간과 겹칠 때 발생합니다.') +
+    item('교대근무수당', '직무기준급 × 정해진 비율(보통 8%). 급여기간(전달 16일~이번달 15일) 중 교대근무 기간이 15일 이상이어야 지급됩니다.') +
+    item('지정휴무일수당', '4조2교대 근무자는 분기(3개월)마다 정해진 지정휴무일(보통 2일, 1일 12시간)을 받는데, 분기 안에 다 쓰지 않으면 분기 마지막 달(3·6·9·12월) 급여에서 미사용 일수만큼 통상임금 150%로 정산됩니다. 캘린더에 "지정휴무"로 등록해서 실제로 쉬면 그만큼 이 수당에서 빠집니다.') +
+    item('자기설계지원금', '입사 후 일정 기간(보통 72개월) 역량개발 지원 명목으로 지급되며, 근속 개월수 구간별로 금액이 줄어듭니다.') +
+    item('업적급 / 경영성과금', '업적급은 분기 개시월에 한 번에 지급되는 걸 이 앱에서는 매달 나눠 반영합니다. 경영성과금은 회사 실적에 따라 분기 둘째·셋째 달에 지급됩니다.') +
+    item('공제 항목(국민연금·건강보험 등)', '4대보험료와 소득세 등은 급여 탭 → 급여 항목 관리에서 비율 또는 고정 금액으로 직접 등록해서 관리합니다. 입사 첫 달엔 국민연금이 당월에 반영 안 되고 다음 달에 소급 공제되는 경우가 흔합니다.') +
+    '</div>';
 }
 async function renderSettingsAI() {
   const box = document.getElementById('settingsBody');
