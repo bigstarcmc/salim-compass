@@ -644,8 +644,31 @@ function loadCalendar() {
     ['교육', '건강검진', '개인일정'].map(t => '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + EV_COLOR[t] + ';margin:0 3px 0 6px;"></span>' + t).join('') +
     ')으로만 찍히고, <b>날짜를 누르면</b> 내용이 나와요.<br>' +
     '<span class="dotImp high" style="position:static;display:inline-block;vertical-align:middle;margin-right:4px;"></span>꼭 챙길 일 · ' +
-    '<span class="dotImp mid" style="position:static;display:inline-block;vertical-align:middle;margin:0 4px 0 8px;"></span>가볍게 볼 일</div></div>';
+    '<span class="dotImp mid" style="position:static;display:inline-block;vertical-align:middle;margin:0 4px 0 8px;"></span>가볍게 볼 일</div>' +
+    '<div style="text-align:right;margin-top:10px;"><button class="btn-sm btn-ghost" onclick="showTideInfo()">🌊 물때표</button></div></div>';
   fetchCalendar();
+}
+// 광양(원료 하역) 물때 — moolttae.com 페이지 전체를 보여주는 대신, 필요한 시각/조위만
+// 서버에서 뽑아와서 우리 화면 스타일로 보여준다(외부 사이트 이동 없이, 필요한 것만).
+async function showTideInfo() {
+  openSheet('오늘의 물때 (광양)', '<div class="muted">불러오는 중...</div>');
+  const dateStr = ymd(new Date());
+  const res = await api('getTideInfo', [dateStr]);
+  const body = document.getElementById('sheetBody');
+  if (!res.success) {
+    body.innerHTML = '<div class="muted">' + res.message + '</div><div style="margin-top:10px;"><a href="https://moolttae.com/detail.html?code=DT_0049&date=' + dateStr + '" target="_blank" rel="noopener">사이트에서 직접 보기 →</a></div>';
+    return;
+  }
+  const d = res.data;
+  let html = '<div class="muted" style="margin-bottom:10px;">' + d.summary + '</div>';
+  if (d.rows && d.rows.length) {
+    html += d.rows.map(r => '<div class="rowLine"><span>' + r.type + ' <span class="muted">' + r.time + '</span></span><span class="amt">' + r.height + '</span></div>').join('');
+  }
+  if (d.sunrise || d.sunset) {
+    html += '<div class="rowLine"><span>일출 · 일몰</span><span class="amt">' + d.sunrise + ' · ' + d.sunset + '</span></div>';
+  }
+  html += '<div style="text-align:right;margin-top:14px;"><a href="' + d.sourceUrl + '" target="_blank" rel="noopener" style="font-size:12px;">오늘물때에서 자세히 보기 →</a></div>';
+  body.innerHTML = html;
 }
 function calShift(n) { calDate.setMonth(calDate.getMonth() + n); fetchCalendar(); }
 function calYm() { return calDate.getFullYear() + '-' + String(calDate.getMonth() + 1).padStart(2, '0'); }
@@ -845,20 +868,47 @@ function editEventM(id) {
   if (!e) return;
   document.querySelectorAll('.segBtn').forEach(b => b.classList.remove('active'));
   const isSwap = e.Type === '대근';
+  const noLeaveCode = isSwap || e.Type === '개인일정' || e.Type === '지정휴무';
   document.getElementById('addFormBox').innerHTML =
     '<div class="cardTitle">일정 수정</div>' +
-    '<div class="field"><label>유형</label><select id="eEvType"><option' + (e.Type === '휴가' ? ' selected' : '') + '>휴가</option><option' + (isSwap ? ' selected' : '') + '>대근</option><option' + (e.Type === '건강검진' ? ' selected' : '') + '>건강검진</option><option' + (e.Type === '교육' ? ' selected' : '') + '>교육</option><option' + (e.Type === '개인일정' ? ' selected' : '') + '>개인일정</option></select></div>' +
-    (isSwap ? '<div class="field"><label>대근 금액</label><input id="eEvAmount" type="number" value="' + (e.EventAmount || '') + '"></div>'
-      : '<div class="field"><label>시간</label><input id="eEvHours" type="number" value="' + (e.EventHours || '') + '"></div>') +
+    '<div class="field"><label>날짜</label><input id="eEvDate" type="date" value="' + e.EventDate + '"></div>' +
+    '<div class="field"><label>유형</label><select id="eEvType" onchange="eEvToggleFields()"><option' + (e.Type === '휴가' ? ' selected' : '') + '>휴가</option><option' + (isSwap ? ' selected' : '') + '>대근</option><option' + (e.Type === '지정휴무' ? ' selected' : '') + '>지정휴무</option><option' + (e.Type === '건강검진' ? ' selected' : '') + '>건강검진</option><option' + (e.Type === '교육' ? ' selected' : '') + '>교육</option><option' + (e.Type === '개인일정' ? ' selected' : '') + '>개인일정</option></select></div>' +
+    '<div class="field" id="eEvLeaveRow" style="display:' + (noLeaveCode ? 'none' : '') + ';"><label>휴가코드 <span class="muted">(이게 비어있으면 급여 계산에 안 잡혀요)</span></label><select id="eEvLeaveCode"><option value="">선택안함</option></select></div>' +
+    '<div class="field" id="eEvSwapRow" style="display:' + (isSwap ? '' : 'none') + ';"><label>대근 방향</label><select id="eEvSwapDir"><option value="야간"' + (e.SwapDirection === '야간' ? ' selected' : '') + '>야간</option><option value="주간"' + (e.SwapDirection === '주간' ? ' selected' : '') + '>주간</option></select></div>' +
+    (isSwap ? '<div class="field"><label>대근 금액(직접 입력 — 비워두면 급여설정 공식대로 자동 계산)</label><input id="eEvAmount" type="number" value="' + (e.EventAmount || '') + '"></div>'
+      : '<div class="field"><label>시간(비우면 휴가코드 기본시간 사용)</label><input id="eEvHours" type="number" value="' + (e.EventHours || '') + '"></div>') +
     '<div class="field"><label>메모</label><input id="eEvMemo" value="' + (e.Memo || '').replace(/"/g, '&quot;') + '"></div>' +
     '<div class="field"><label>중요도</label><select id="eEvPriority">' +
     ['', 'normal', 'high'].map(v => '<option value="' + v + '"' + (eventLevel(e) === v ? ' selected' : '') + '>' +
       (v === '' ? '표시 안 함' : (v === 'normal' ? '주황 (가볍게 볼 일)' : '빨강 (꼭 챙길 일)')) + '</option>').join('') + '</select></div>' +
     '<button class="btn btn-gold" onclick="saveEventEditM(\'' + id + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="switchAddSeg(\'event\')">취소</button>';
+  api('listLeaveCodes').then(res => {
+    if (!res.success) return;
+    QUICK_LEAVE_CODES = res.data;
+    const sel = document.getElementById('eEvLeaveCode');
+    if (!sel) return;
+    res.data.forEach(c => { const o = document.createElement('option'); o.value = c.CodeID; o.text = c.Name; sel.appendChild(o); });
+    sel.value = e.LeaveCodeID || '';
+  });
+}
+function eEvToggleFields() {
+  const val = document.getElementById('eEvType').value;
+  const isSwap = val === '대근';
+  const noLeaveCode = isSwap || val === '개인일정' || val === '지정휴무';
+  document.getElementById('eEvSwapRow').style.display = isSwap ? '' : 'none';
+  const leaveRow = document.getElementById('eEvLeaveRow');
+  if (leaveRow) leaveRow.style.display = noLeaveCode ? 'none' : '';
+  if (!noLeaveCode) {
+    const match = QUICK_LEAVE_CODES.find(c => c.Name === val);
+    const leaveSel = document.getElementById('eEvLeaveCode');
+    if (match && leaveSel) leaveSel.value = match.CodeID;
+  }
 }
 async function saveEventEditM(id) {
   const priority = document.getElementById('eEvPriority').value;
-  const patch = { Type: document.getElementById('eEvType').value, Memo: document.getElementById('eEvMemo').value, Priority: priority, IsImportant: !!priority };
+  const patch = { EventDate: document.getElementById('eEvDate').value, Type: document.getElementById('eEvType').value, Memo: document.getElementById('eEvMemo').value, Priority: priority, IsImportant: !!priority };
+  if (document.getElementById('eEvLeaveCode')) patch.LeaveCodeID = document.getElementById('eEvLeaveCode').value;
+  if (document.getElementById('eEvSwapDir')) patch.SwapDirection = document.getElementById('eEvSwapDir').value;
   if (document.getElementById('eEvAmount')) patch.EventAmount = Number(document.getElementById('eEvAmount').value);
   if (document.getElementById('eEvHours')) patch.EventHours = Number(document.getElementById('eEvHours').value);
   const res = await api('updateEvent', [id, patch]);
@@ -888,6 +938,7 @@ function switchAddSeg(type) {
   else showAddJournalForm(type);
 }
 
+let QUICK_LEAVE_CODES = [];
 async function showAddEventForm() {
   const box = document.getElementById('addFormBox');
   box.innerHTML =
@@ -902,6 +953,7 @@ async function showAddEventForm() {
     '<button class="btn btn-gold" onclick="submitQuickEvent()">저장</button>';
   const res = await api('listLeaveCodes');
   if (res.success) {
+    QUICK_LEAVE_CODES = res.data;
     const sel = document.getElementById('qLeaveCode');
     res.data.forEach(c => { const o = document.createElement('option'); o.value = c.CodeID; o.text = c.Name; sel.appendChild(o); });
   }
@@ -947,6 +999,15 @@ function qToggleFields() {
   const noLeaveCode = isSwap || val === '개인일정' || val === '지정휴무';
   document.getElementById('qSwapRow').style.display = isSwap ? '' : 'none';
   document.getElementById('qLeaveRow').style.display = noLeaveCode ? 'none' : '';
+  // 유형(교육/건강검진 등)을 고르면 이름이 같은 휴가코드를 자동으로 같이 선택해준다.
+  // 예전엔 "유형"과 "휴가코드"가 서로 다른 선택창이라 유형만 고르고 휴가코드는
+  // "선택안함"으로 깜빡 남겨두는 경우가 있었는데, 그러면 급여 계산에 그 이벤트가 아예
+  // 안 잡힌다(연장근무수당 계산이 LeaveCodeID를 보고 판단하기 때문).
+  if (!noLeaveCode) {
+    const match = QUICK_LEAVE_CODES.find(c => c.Name === val);
+    const leaveSel = document.getElementById('qLeaveCode');
+    if (match && leaveSel) leaveSel.value = match.CodeID;
+  }
 }
 async function submitQuickEvent() {
   const type = document.getElementById('qEvType').value;
@@ -1008,20 +1069,26 @@ function renderPayrollCardHtml(profile, d) {
   const itemsId = 'payItems-' + oid;
   const configId = 'payConfig-' + oid;
   PAY_ITEMS_CACHE[oid] = { extra: d.extraItems || [], deduction: d.deductionItems || [] };
+  const confirmedRegular = d.confirmedSalary && d.confirmedSalary.regular;
+  const confirmedBonus = d.confirmedSalary && d.confirmedSalary.bonus;
+  const lineRow = (it, idx) => {
+    const neg = it.amount < 0;
+    const rowId = 'payline-' + oid + '-' + idx;
+    return '<div class="rowLine" style="flex-direction:column;align-items:stretch;' + (it.desc ? 'cursor:pointer;' : '') + '"' + (it.desc ? ' onclick="togglePayLineDesc(\'' + rowId + '\')"' : '') + '>' +
+      '<div style="display:flex;justify-content:space-between;"><span' + (neg ? ' style="color:var(--danger);"' : '') + '>' + it.label + (it.desc ? ' <span class="muted">ⓘ</span>' : '') + '</span><span class="amt"' + (neg ? ' style="color:var(--danger);"' : '') + '>' + (neg ? '-' : '') + fmtWon(Math.abs(it.amount)) + '</span></div>' +
+      (it.desc ? '<div id="' + rowId + '" class="muted" style="display:none;font-size:12px;margin-top:4px;line-height:1.5;">' + it.desc + '</div>' : '') +
+      '</div>';
+  };
   return '<div class="card">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="togglePayDetail(\'' + detailId + '\')">' +
-    '<div><div class="cardTitle" style="margin-bottom:2px;">' + profile.Name + '</div><div style="font-size:22px;font-weight:800;">' + fmtWon(est.estimated) + '</div><div class="muted">실수령 추정</div></div>' +
+    '<div><div class="cardTitle" style="margin-bottom:2px;">' + profile.Name + '</div><div style="font-size:22px;font-weight:800;">' + fmtWon(est.estimated) + '</div><div class="muted">실수령 추정 (급여 ' + fmtWon(est.regularEstimated) + ' + 상여 ' + fmtWon(est.bonusEstimated) + ')</div></div>' +
     '<span id="' + detailId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 항목보기</span></div>' +
     '<div id="' + detailId + '" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">' +
     '<div class="muted" style="margin-bottom:6px;">' + est.periodStart + ' ~ ' + est.periodEnd + ' → ' + est.payMonth + ' 지급 · <span style="text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();jumpTo(\'settings\',\'payguide\')">항목 설명 보기</span></div>' +
-    est.lineItems.map((it, idx) => {
-      const neg = it.amount < 0;
-      const rowId = 'payline-' + oid + '-' + idx;
-      return '<div class="rowLine" style="flex-direction:column;align-items:stretch;' + (it.desc ? 'cursor:pointer;' : '') + '"' + (it.desc ? ' onclick="togglePayLineDesc(\'' + rowId + '\')"' : '') + '>' +
-        '<div style="display:flex;justify-content:space-between;"><span' + (neg ? ' style="color:var(--danger);"' : '') + '>' + it.label + (it.desc ? ' <span class="muted">ⓘ</span>' : '') + '</span><span class="amt"' + (neg ? ' style="color:var(--danger);"' : '') + '>' + (neg ? '-' : '') + fmtWon(Math.abs(it.amount)) + '</span></div>' +
-        (it.desc ? '<div id="' + rowId + '" class="muted" style="display:none;font-size:12px;margin-top:4px;line-height:1.5;">' + it.desc + '</div>' : '') +
-        '</div>';
-    }).join('') +
+    '<div class="muted" style="font-weight:700;margin:8px 0 2px;">급여 (보통 20일 입금)</div>' +
+    est.regularItems.map(lineRow).join('') +
+    '<div class="muted" style="font-weight:700;margin:14px 0 2px;">상여 · 경영성과금 (보통 25일 입금)</div>' +
+    (est.bonusItems.map(lineRow).join('') || '<div class="emptyState">해당 없음</div>') +
     '</div>' +
     '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;margin-top:10px;" onclick="togglePayDetail(\'' + itemsId + '\')">' +
     '<span class="cardTitle" style="margin:0;">급여 항목 관리</span>' +
@@ -1031,9 +1098,14 @@ function renderPayrollCardHtml(profile, d) {
     '<span class="cardTitle" style="margin:0;">기본 급여 설정</span>' +
     '<span id="' + configId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 펼치기</span></div>' +
     '<div id="' + configId + '" style="display:none;margin-top:10px;">' + renderPayConfigBoxHtml(oid, est.config) + '</div>' +
-    '<div class="muted" style="margin-top:10px;">' + (d.confirmedSalary ? '이미 확정됨: ' + fmtWon(d.confirmedSalary.ConfirmedAmount) : '이번 달 아직 확정 안 함') + '</div>' +
-    '<div class="field"><label>실제 입금액</label><input id="payConfirmAmount-' + oid + '" type="number"></div>' +
-    '<button class="btn btn-gold" onclick="submitPayrollConfirm(\'' + oid + '\')">확정 입력</button></div>';
+    '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border);">' +
+    '<div class="muted" style="margin-bottom:4px;">급여(20일) — ' + (confirmedRegular ? '이미 확정됨: ' + fmtWon(confirmedRegular.ConfirmedAmount) : '아직 확정 안 함') + '</div>' +
+    '<div class="field"><input id="payConfirmAmount-regular-' + oid + '" type="number" placeholder="' + est.regularEstimated + '"></div>' +
+    '<button class="btn btn-gold" onclick="submitPayrollConfirm(\'' + oid + '\',\'regular\')">급여 확정 입력</button>' +
+    '<div class="muted" style="margin:14px 0 4px;">상여·경영성과금(25일) — ' + (confirmedBonus ? '이미 확정됨: ' + fmtWon(confirmedBonus.ConfirmedAmount) : '아직 확정 안 함') + '</div>' +
+    '<div class="field"><input id="payConfirmAmount-bonus-' + oid + '" type="number" placeholder="' + est.bonusEstimated + '"></div>' +
+    '<button class="btn btn-ghost" onclick="submitPayrollConfirm(\'' + oid + '\',\'bonus\')">상여 확정 입력</button>' +
+    '</div></div>';
 }
 function togglePayLineDesc(id) {
   const el = document.getElementById(id);
@@ -1117,6 +1189,7 @@ function renderPayItemsBoxHtml(oid) {
     '<div id="payExtraList-' + oid + '">' + renderPayItemsListHtml(oid, 'extra') + '</div>' +
     '<div class="field" style="margin-top:10px;"><label>이름</label><input id="newExtraLabel-' + oid + '" placeholder="예: 성과급"></div>' +
     '<div class="field"><label>금액(원)</label><input id="newExtraAmount-' + oid + '" type="number"></div>' +
+    '<div class="field"><label>구분</label><select id="newExtraGroup-' + oid + '"><option value="regular">급여(20일)에 포함</option><option value="bonus">상여·경영성과금(25일)에 포함</option></select></div>' +
     '<div class="field"><label>메모(선택)</label><input id="newExtraNote-' + oid + '"></div>' +
     '<button class="btn-sm btn-ghost" onclick="addPayItemM(\'extra\',\'' + oid + '\')">추가 항목 넣기</button>' +
     '<div style="font-weight:700;margin:18px 0 4px;">공제 항목 <span class="muted" style="font-weight:400;">(세금·보험·조합비 등)</span></div>' +
@@ -1132,7 +1205,8 @@ function editPayItemM(kind, oid, itemId) {
   const row = document.getElementById('payitem-' + itemId);
   if (!it || !row) return;
   const valueField = kind === 'extra'
-    ? '<div class="field" style="margin:4px 0;"><label>금액(원)</label><input id="eItemAmount-' + itemId + '" type="number" value="' + (it.Amount || 0) + '"></div>'
+    ? '<div class="field" style="margin:4px 0;"><label>금액(원)</label><input id="eItemAmount-' + itemId + '" type="number" value="' + (it.Amount || 0) + '"></div>' +
+      '<div class="field" style="margin:4px 0;"><label>구분</label><select id="eItemGroup-' + itemId + '"><option value="regular"' + (it.Group !== 'bonus' ? ' selected' : '') + '>급여(20일)에 포함</option><option value="bonus"' + (it.Group === 'bonus' ? ' selected' : '') + '>상여·경영성과금(25일)에 포함</option></select></div>'
     : '<div class="field" style="margin:4px 0;"><label>고정 금액(원)</label><input id="eItemAmount-' + itemId + '" type="number" value="' + (it.Amount || '') + '"></div>' +
       '<div class="field" style="margin:4px 0;"><label>또는 비율(%)</label><input id="eItemRate-' + itemId + '" type="number" step="0.01" value="' + (it.Rate ? Math.round(Number(it.Rate) * 10000) / 100 : '') + '"></div>';
   row.outerHTML = '<div class="listRow" id="payitem-' + itemId + '">' +
@@ -1150,6 +1224,7 @@ async function savePayItemM(kind, oid, itemId) {
   };
   if (kind === 'extra') {
     patch.Amount = Number(document.getElementById('eItemAmount-' + itemId).value);
+    patch.Group = document.getElementById('eItemGroup-' + itemId).value;
   } else {
     const amtVal = document.getElementById('eItemAmount-' + itemId).value;
     const rateVal = document.getElementById('eItemRate-' + itemId).value;
@@ -1166,8 +1241,9 @@ async function addPayItemM(kind, oid) {
     const label = document.getElementById('newExtraLabel-' + oid).value;
     const amount = Number(document.getElementById('newExtraAmount-' + oid).value);
     const note = document.getElementById('newExtraNote-' + oid).value;
+    const group = document.getElementById('newExtraGroup-' + oid).value;
     if (!label.trim()) { alert('이름을 입력하세요.'); return; }
-    const res = await api('addSalaryExtraItem', [oid, label, amount, '', '', note]);
+    const res = await api('addSalaryExtraItem', [oid, label, amount, '', '', note, group]);
     if (!res.success) { alert('저장 실패: ' + res.message); return; }
   } else {
     const label = document.getElementById('newDeductLabel-' + oid).value;
@@ -1193,14 +1269,15 @@ async function movePayItemM(kind, oid, itemId, direction) {
   if (!res.success) { alert(res.message); return; }
   loadPayroll();
 }
-async function submitPayrollConfirm(ownerId) {
-  const amount = Number(document.getElementById('payConfirmAmount-' + ownerId).value);
+async function submitPayrollConfirm(ownerId, payType) {
+  const amount = Number(document.getElementById('payConfirmAmount-' + payType + '-' + ownerId).value);
+  if (!amount) { alert('금액을 입력하세요.'); return; }
   const dRes = await api('getPayrollPageData', [ownerId, todayYm()]);
   const accountId = dRes.success ? dRes.data.defaultPayoutAccountId : '';
   if (!accountId) { alert('먼저 설정 탭에서 기본 급여계좌를 지정해주세요.'); return; }
-  const res = await api('confirmSalary', [ownerId, todayYm(), amount, accountId]);
+  const res = await api('confirmSalary', [ownerId, todayYm(), payType, amount, accountId]);
   if (!res.success) { alert('저장 실패: ' + res.message); return; }
-  alert('확정 완료: ' + fmtWon(res.data.confirmed));
+  alert((payType === 'bonus' ? '상여' : '급여') + ' 확정 완료: ' + fmtWon(res.data.confirmed));
   loadPayroll();
 }
 
@@ -2071,9 +2148,11 @@ async function renderSettingsLeaveCodes() {
   renderSettingsLeaveCodesHtml(res.data);
 }
 function renderSettingsLeaveCodesHtml(data) {
+  LEAVE_CODES_CACHE = data;
   const box = document.getElementById('settingsBody');
   box.innerHTML = '<div class="card"><div class="cardTitle">휴가코드 목록</div>' +
-    data.map(c => '<div class="rowLine"><span>' + c.Code + ' · ' + c.Name + ' <span class="muted">(' + c.HoursCredit + '시간' + (String(c.PayOnWorkday) === 'true' ? ', 근무일반영' : '') + ')</span></span><span class="iconBtn danger" style="color:var(--danger);" onclick="delLeaveCode(\'' + c.CodeID + '\')" title="삭제">🗑️</span></div>').join('') +
+    data.map(c => '<div class="listRow" id="lcrow-' + c.CodeID + '"><div class="listMain"><span>' + c.Code + ' · ' + c.Name + ' <span class="muted">(' + c.HoursCredit + '시간' + (String(c.PayOnWorkday) === 'true' ? ', 근무일반영' : '') + ')</span></span>' +
+      '<span class="iconActions"><span class="iconBtn" onclick="editLeaveCodeM(\'' + c.CodeID + '\')" title="수정">✏️</span><span class="iconBtn danger" style="color:var(--danger);" onclick="delLeaveCode(\'' + c.CodeID + '\')" title="삭제">🗑️</span></span></div></div>').join('') +
     '</div><div class="card"><div class="cardTitle">휴가코드 추가</div>' +
     '<div class="field"><label>코드</label><input id="lcCode" placeholder="예: S"></div>' +
     '<div class="field"><label>이름</label><input id="lcName"></div>' +
@@ -2081,6 +2160,31 @@ function renderSettingsLeaveCodesHtml(data) {
     '<div class="field"><label>고정수당</label><input id="lcFixedPay" type="number" value="0"></div>' +
     '<div class="field"><label><input type="checkbox" id="lcPayOnWorkday"> 근무일에 쓰면 급여로 환산</label></div>' +
     '<button class="btn btn-gold" onclick="addLeaveCodeM()">저장</button></div>';
+}
+let LEAVE_CODES_CACHE = [];
+function editLeaveCodeM(id) {
+  const c = LEAVE_CODES_CACHE.find(x => x.CodeID === id);
+  const row = document.getElementById('lcrow-' + id);
+  if (!c || !row) return;
+  row.innerHTML =
+    '<div class="field" style="margin:4px 0;"><label>코드</label><input id="eLcCode-' + id + '" value="' + c.Code.replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field" style="margin:4px 0;"><label>이름</label><input id="eLcName-' + id + '" value="' + c.Name.replace(/"/g, '&quot;') + '"></div>' +
+    '<div class="field" style="margin:4px 0;"><label>인정시간</label><input id="eLcHours-' + id + '" type="number" value="' + c.HoursCredit + '"></div>' +
+    '<div class="field" style="margin:4px 0;"><label>고정수당</label><input id="eLcFixedPay-' + id + '" type="number" value="' + (c.FixedPay || 0) + '"></div>' +
+    '<div class="field" style="margin:4px 0;"><label><input type="checkbox" id="eLcPayOnWorkday-' + id + '"' + (String(c.PayOnWorkday) === 'true' ? ' checked' : '') + '> 근무일에 쓰면 급여로 환산</label></div>' +
+    '<button class="btn-sm btn-gold" onclick="saveLeaveCodeEditM(\'' + id + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="renderSettingsLeaveCodes()">취소</button>';
+}
+async function saveLeaveCodeEditM(id) {
+  const patch = {
+    Code: document.getElementById('eLcCode-' + id).value,
+    Name: document.getElementById('eLcName-' + id).value,
+    HoursCredit: Number(document.getElementById('eLcHours-' + id).value),
+    FixedPay: Number(document.getElementById('eLcFixedPay-' + id).value),
+    PayOnWorkday: document.getElementById('eLcPayOnWorkday-' + id).checked
+  };
+  const res = await api('updateLeaveCode', [id, patch]);
+  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  renderSettingsLeaveCodes();
 }
 async function addLeaveCodeM() {
   const res = await api('addLeaveCode', [document.getElementById('lcCode').value, document.getElementById('lcName').value, Number(document.getElementById('lcHours').value), Number(document.getElementById('lcFixedPay').value), document.getElementById('lcPayOnWorkday').checked]);
