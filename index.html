@@ -1056,6 +1056,7 @@ function renderPayrollCardHtml(profile, d) {
   const itemsId = 'payItems-' + oid;
   const configId = 'payConfig-' + oid;
   PAY_ITEMS_CACHE[oid] = { extra: d.extraItems || [], deduction: d.deductionItems || [] };
+  PAY_CONFIG_CACHE[oid] = est.config;
   const confirmedRegular = d.confirmedSalary && d.confirmedSalary.regular;
   const confirmedBonus = d.confirmedSalary && d.confirmedSalary.bonus;
   // 백엔드를 아직 새 버전으로 재배포하기 전이면 regularItems/bonusItems 없이 옛날 lineItems만
@@ -1145,8 +1146,15 @@ async function savePayConfigM(oid) {
     SwapNightNightHours: Number(document.getElementById('cfgSwapNightNight-' + oid).value),
     SwapDayTotalHours: Number(document.getElementById('cfgSwapDayTotal-' + oid).value)
   };
+  const btn = event && event.target;
+  const origText = btn ? btn.innerText : '';
+  if (btn) { btn.disabled = true; btn.innerText = '저장 중…'; } // 여긴 값 하나가 여러 항목에 얽혀있어(통상임금 등) 화면을 미리 못 바꾸지만, 버튼만이라도 즉시 반응하게
   const res = await api('updateSalaryConfigFields', [oid, patch]);
-  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  if (!res.success) {
+    if (btn) { btn.disabled = false; btn.innerText = origText; }
+    alert('저장 실패: ' + res.message);
+    return;
+  }
   loadPayroll();
 }
 function togglePayDetail(id) {
@@ -1160,6 +1168,7 @@ function togglePayDetail(id) {
  * getPayrollPageData 응답에 이미 extraItems/deductionItems가 들어있어서 별도 조회 없이
  * 바로 렌더링한다. 순서변경은 서버에 Order 컬럼을 두고 바로 옆 항목과 맞바꾸는 방식(▲▼). */
 let PAY_ITEMS_CACHE = {};
+let PAY_CONFIG_CACHE = {}; // ownerId -> 마지막으로 받은 급여 설정(계좌 확정 시 재조회 없이 씀)
 function payItemValueLabel(it, kind) {
   if (kind === 'extra') return fmtWon(it.Amount);
   const hasAmt = it.Amount !== '' && it.Amount !== undefined && it.Amount !== null && !isNaN(Number(it.Amount)) && Number(it.Amount) !== 0;
@@ -1167,14 +1176,16 @@ function payItemValueLabel(it, kind) {
 }
 function payItemRowHtml(it, kind, oid) {
   const period = (it.StartMonth || it.EndMonth) ? ' <span class="muted">(' + (it.StartMonth || '~') + ' ~ ' + (it.EndMonth || '계속') + ')</span>' : '';
-  return '<div class="listRow" id="payitem-' + it.ItemID + '">' +
-    '<div class="listMain"><span>' + it.Label + period + '</span><span class="amt">' + payItemValueLabel(it, kind) + '</span></div>' +
-    '<div class="listSub"><span></span><span class="iconActions">' +
+  const actions = it._pending ? '<span class="muted" style="font-size:11px;">저장 중…</span>' :
+    '<span class="iconActions">' +
     '<span class="iconBtn" onclick="movePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\',\'up\')" title="위로">⬆️</span>' +
     '<span class="iconBtn" onclick="movePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\',\'down\')" title="아래로">⬇️</span>' +
     '<span class="iconBtn" onclick="editPayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\')" title="수정">✏️</span>' +
     '<span class="iconBtn danger" style="color:var(--danger);" onclick="deletePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + it.ItemID + '\')" title="삭제">🗑️</span>' +
-    '</span></div></div>';
+    '</span>';
+  return '<div class="listRow" id="payitem-' + it.ItemID + '"' + (it._pending ? ' style="opacity:.55;"' : '') + '>' +
+    '<div class="listMain"><span>' + it.Label + period + '</span><span class="amt">' + payItemValueLabel(it, kind) + '</span></div>' +
+    '<div class="listSub"><span></span>' + actions + '</div></div>';
 }
 function renderPayItemsListHtml(oid, kind) {
   const list = (PAY_ITEMS_CACHE[oid] && PAY_ITEMS_CACHE[oid][kind]) || [];
@@ -1212,6 +1223,15 @@ function editPayItemM(kind, oid, itemId) {
     '<div class="field" style="margin:4px 0;"><label>종료월(선택, YYYY-MM)</label><input id="eItemEnd-' + itemId + '" value="' + (it.EndMonth || '') + '"></div>' +
     '<div><button class="btn-sm btn-gold" onclick="savePayItemM(\'' + kind + '\',\'' + oid + '\',\'' + itemId + '\')">저장</button> <button class="btn-sm btn-ghost" onclick="loadPayroll()">취소</button></div></div>';
 }
+/* 아래 4개(추가/수정/삭제/순서변경)는 전부 낙관적 UI: 로컬 캐시(PAY_ITEMS_CACHE)를 먼저
+ * 바꾸고 그 목록만 즉시 다시 그린 다음, 서버 요청은 배경에서 보낸다. 실패하면 그 자리에서
+ * 되돌린다. 다만 "실수령 추정" 상단 합계는 서버가 계산해야 하는 값이라 즉시는 안 바뀌고,
+ * 서버 응답이 오면 loadPayroll()로 조용히 갱신된다(그때도 화면은 이미 반응한 뒤라
+ * 기다리는 느낌이 없다). */
+function renderPayItemListBox(oid, kind) {
+  const el = document.getElementById('pay' + (kind === 'extra' ? 'Extra' : 'Deduction') + 'List-' + oid);
+  if (el) el.innerHTML = renderPayItemsListHtml(oid, kind);
+}
 async function savePayItemM(kind, oid, itemId) {
   const patch = {
     Label: document.getElementById('eItemLabel-' + itemId).value,
@@ -1227,42 +1247,88 @@ async function savePayItemM(kind, oid, itemId) {
     patch.Amount = amtVal ? Number(amtVal) : '';
     patch.Rate = rateVal ? Number(rateVal) / 100 : '';
   }
+  const list = PAY_ITEMS_CACHE[oid][kind];
+  const idx = list.findIndex(it => it.ItemID === itemId);
+  const backup = idx !== -1 ? Object.assign({}, list[idx]) : null;
+  if (idx !== -1) Object.assign(list[idx], patch);
+  renderPayItemListBox(oid, kind);
+
   const action = kind === 'extra' ? 'updateSalaryExtraItem' : 'updateSalaryDeductionItem';
   const res = await api(action, [itemId, patch]);
-  if (!res.success) { alert('저장 실패: ' + res.message); return; }
+  if (!res.success) {
+    if (backup && idx !== -1) list[idx] = backup;
+    renderPayItemListBox(oid, kind);
+    alert('저장 실패: ' + res.message);
+    return;
+  }
   loadPayroll();
 }
 async function addPayItemM(kind, oid) {
+  let optimisticItem, action, args;
   if (kind === 'extra') {
     const label = document.getElementById('newExtraLabel-' + oid).value;
     const amount = Number(document.getElementById('newExtraAmount-' + oid).value);
     const note = document.getElementById('newExtraNote-' + oid).value;
     const group = document.getElementById('newExtraGroup-' + oid).value;
     if (!label.trim()) { alert('이름을 입력하세요.'); return; }
-    const res = await api('addSalaryExtraItem', [oid, label, amount, '', '', note, group]);
-    if (!res.success) { alert('저장 실패: ' + res.message); return; }
+    optimisticItem = { ItemID: 'pending-' + Date.now(), Label: label, Amount: amount, Note: note, Group: group, _pending: true };
+    action = 'addSalaryExtraItem'; args = [oid, label, amount, '', '', note, group];
   } else {
     const label = document.getElementById('newDeductLabel-' + oid).value;
     const amount = document.getElementById('newDeductAmount-' + oid).value;
     const ratePct = document.getElementById('newDeductRate-' + oid).value;
     if (!label.trim()) { alert('이름을 입력하세요.'); return; }
     if (!amount && !ratePct) { alert('고정 금액이나 비율 중 하나는 입력하세요.'); return; }
-    const res = await api('addSalaryDeductionItem', [oid, label, ratePct ? Number(ratePct) / 100 : '', '', '', amount ? Number(amount) : '']);
-    if (!res.success) { alert('저장 실패: ' + res.message); return; }
+    optimisticItem = { ItemID: 'pending-' + Date.now(), Label: label, Amount: amount ? Number(amount) : '', Rate: ratePct ? Number(ratePct) / 100 : '', _pending: true };
+    action = 'addSalaryDeductionItem'; args = [oid, label, ratePct ? Number(ratePct) / 100 : '', '', '', amount ? Number(amount) : ''];
+  }
+  PAY_ITEMS_CACHE[oid][kind].push(optimisticItem);
+  renderPayItemListBox(oid, kind);
+  if (kind === 'extra') { document.getElementById('newExtraLabel-' + oid).value = ''; document.getElementById('newExtraAmount-' + oid).value = ''; document.getElementById('newExtraNote-' + oid).value = ''; }
+  else { document.getElementById('newDeductLabel-' + oid).value = ''; document.getElementById('newDeductAmount-' + oid).value = ''; document.getElementById('newDeductRate-' + oid).value = ''; }
+
+  const res = await api(action, args);
+  if (!res.success) {
+    PAY_ITEMS_CACHE[oid][kind] = PAY_ITEMS_CACHE[oid][kind].filter(it => it.ItemID !== optimisticItem.ItemID);
+    renderPayItemListBox(oid, kind);
+    alert('저장 실패: ' + res.message);
+    return;
   }
   loadPayroll();
 }
 async function deletePayItemM(kind, oid, itemId) {
   if (!confirm('이 항목을 삭제할까요?')) return;
+  const backup = PAY_ITEMS_CACHE[oid][kind];
+  PAY_ITEMS_CACHE[oid][kind] = backup.filter(it => it.ItemID !== itemId);
+  renderPayItemListBox(oid, kind);
+
   const action = kind === 'extra' ? 'deleteSalaryExtraItem' : 'deleteSalaryDeductionItem';
   const res = await api(action, [itemId]);
-  if (!res.success) { alert(res.message); return; }
+  if (!res.success) {
+    PAY_ITEMS_CACHE[oid][kind] = backup;
+    renderPayItemListBox(oid, kind);
+    alert(res.message);
+    return;
+  }
   loadPayroll();
 }
 async function movePayItemM(kind, oid, itemId, direction) {
+  const list = PAY_ITEMS_CACHE[oid][kind];
+  const idx = list.findIndex(it => it.ItemID === itemId);
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= list.length) return;
+  const backup = list.slice();
+  const tmp = list[idx]; list[idx] = list[swapIdx]; list[swapIdx] = tmp;
+  renderPayItemListBox(oid, kind);
+
   const action = kind === 'extra' ? 'updateSalaryExtraItemOrder' : 'updateSalaryDeductionItemOrder';
   const res = await api(action, [oid, itemId, direction]);
-  if (!res.success) { alert(res.message); return; }
+  if (!res.success) {
+    PAY_ITEMS_CACHE[oid][kind] = backup;
+    renderPayItemListBox(oid, kind);
+    alert(res.message);
+    return;
+  }
   loadPayroll();
 }
 async function initPayrollM(oid) {
@@ -1273,14 +1339,35 @@ async function initPayrollM(oid) {
   loadPayroll();
 }
 async function submitPayrollConfirm(ownerId, payType) {
-  const amount = Number(document.getElementById('payConfirmAmount-' + payType + '-' + ownerId).value);
+  const input = document.getElementById('payConfirmAmount-' + payType + '-' + ownerId);
+  const amount = Number(input.value);
   if (!amount) { alert('금액을 입력하세요.'); return; }
-  const dRes = await api('getPayrollPageData', [ownerId, todayYm()]);
-  const accountId = dRes.success ? dRes.data.defaultPayoutAccountId : '';
-  if (!accountId) { alert('먼저 설정 탭에서 기본 급여계좌를 지정해주세요.'); return; }
+  // 이미 카드를 그릴 때 받아둔 설정을 그대로 쓴다 — 예전엔 확정 누를 때마다
+  // getPayrollPageData를 한 번 더 불러서 계좌ID만 꺼내 썼는데, 왕복 하나가 그냥 낭비였음.
+  const accountId = (PAY_CONFIG_CACHE[ownerId] || {}).DefaultPayoutAccountID;
+  if (!accountId) {
+    const configBox = document.getElementById('payConfig-' + ownerId);
+    if (configBox) {
+      configBox.style.display = '';
+      const arrow = document.getElementById('payConfig-' + ownerId + '-arrow');
+      if (arrow) arrow.innerText = '▾ 접기';
+      configBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const sel = document.getElementById('cfgPayoutAccount-' + ownerId);
+      if (sel) sel.focus();
+    }
+    alert('먼저 아래 "기본 급여 설정"에서 급여 입금계좌를 지정하고 저장해주세요. 한 번만 해두면 다음부턴 안 물어봐요.');
+    return;
+  }
+  // 버튼을 바로 비활성화 + 문구 변경해서 "눌렸다"는 걸 즉시 보여준다(중복 클릭 방지 겸용).
+  const btn = event && event.target;
+  const origText = btn ? btn.innerText : '';
+  if (btn) { btn.disabled = true; btn.innerText = '처리 중…'; }
   const res = await api('confirmSalary', [ownerId, todayYm(), payType, amount, accountId]);
-  if (!res.success) { alert('저장 실패: ' + res.message); return; }
-  alert((payType === 'bonus' ? '상여' : '급여') + ' 확정 완료: ' + fmtWon(res.data.confirmed));
+  if (!res.success) {
+    if (btn) { btn.disabled = false; btn.innerText = origText; }
+    alert('저장 실패: ' + res.message);
+    return;
+  }
   loadPayroll();
 }
 
@@ -1462,16 +1549,41 @@ async function saveTxnEdit(txnId) {
     if (m === 'account' && !patch.AccountID) { alert('계좌를 선택하세요.'); return; }
     patch.CategoryID = document.getElementById('etCategory').value;
   }
-  const res = await api('updateTransaction', [txnId, patch]);
-  if (!res.success) { alert('수정 실패: ' + res.message); return; }
+  // 낙관적 UI: 창을 바로 닫고 목록도 즉시 새 값으로 반영한 다음, 서버 반영은 뒤에서 확인만.
+  // (계좌 잔액처럼 서버가 다시 계산해야 하는 값은 여기선 안 건드리고, loadLedger()가
+  // 백그라운드로 도착하면 자연히 정확한 값으로 맞춰진다.)
   closeSheet();
+  const merged = Object.assign({}, t, patch);
+  if (merged.TxnType === '이체') {
+    const fromAcc = LT_ACCOUNTS.find(a => a.AccountID === merged.FromAccountID);
+    const toAcc = LT_ACCOUNTS.find(a => a.AccountID === merged.ToAccountID);
+    merged.FromAccountName = fromAcc ? fromAcc.Name : '';
+    merged.ToAccountName = toAcc ? toAcc.Name : '';
+  } else {
+    const acc = merged.CardID ? LT_CARDS.find(c => c.CardID === merged.CardID) : LT_ACCOUNTS.find(a => a.AccountID === merged.AccountID);
+    merged.AccountName = acc ? (merged.CardID ? acc.AccountName : acc.Name) : '';
+    const cat = LT_CATEGORIES.find(c => c.CategoryID === merged.CategoryID);
+    merged.CategoryName = cat ? cat.Name : '';
+  }
+  LT_TXN_MAP[txnId] = merged;
+  const idx = LT_TXNS_CACHE.findIndex(x => x.TxnID === txnId);
+  if (idx !== -1) LT_TXNS_CACHE[idx] = merged;
+  if (merged.TxnType === '이체') updateLtTransferList(LT_TXNS_CACHE); else updateLtTxnList(LT_TXNS_CACHE);
+
+  const res = await api('updateTransaction', [txnId, patch]);
+  if (!res.success) { alert('수정 실패: ' + res.message); }
   loadLedger();
 }
 async function deleteTxnM(txnId) {
   if (!confirm('이 거래를 삭제할까요? 계좌 잔액도 되돌아가요.')) return;
-  const res = await api('deleteTransaction', [txnId]);
-  if (!res.success) { alert('삭제 실패: ' + res.message); return; }
   closeSheet();
+  const t = LT_TXN_MAP[txnId];
+  const wasTransfer = t && t.TxnType === '이체';
+  LT_TXNS_CACHE = LT_TXNS_CACHE.filter(x => x.TxnID !== txnId);
+  if (wasTransfer) updateLtTransferList(LT_TXNS_CACHE); else updateLtTxnList(LT_TXNS_CACHE);
+
+  const res = await api('deleteTransaction', [txnId]);
+  if (!res.success) { alert('삭제 실패: ' + res.message); }
   loadLedger();
 }
 
