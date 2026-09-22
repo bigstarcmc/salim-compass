@@ -438,11 +438,49 @@ async function fetchHome() {
   // 데워두면, 실제로 저축 탭을 눌렀을 때 대부분 캐시 히트로 바로 뜬다.
   api('listSavingsGoals');
 }
+// 홈 화면 맨 위 "한눈에 보는" 막대그래프. 일별(이번달/지난달)이면 수입은 위로,
+// 지출은 아래로 — 증권 앱의 캔들/거래량 차트처럼 기준선(0) 위아래로 갈라서 보여준다.
+// 월별(최근3개월/올해)로 전환되면 같은 함수가 자동으로 달 단위 막대를 그린다(백엔드가
+// 기간 길이를 보고 이미 일/월 단위를 정해서 series를 넘겨주기 때문에 여기선 그대로 그리기만 함).
+function buildCashFlowChartSvg(series) {
+  if (!series || !series.length) return '';
+  const w = 328, h = 128, midY = h / 2;
+  const maxVal = Math.max(1, ...series.map(s => Math.max(s.income, s.expense)));
+  const barAreaH = h / 2 - 16;
+  const n = series.length;
+  const slot = w / n;
+  const barW = Math.max(2, Math.min(16, slot * 0.62));
+  let bars = '';
+  series.forEach((s, i) => {
+    const cx = slot * i + slot / 2;
+    if (s.income > 0) {
+      const hgt = (s.income / maxVal) * barAreaH;
+      bars += '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + (midY - hgt).toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="1.5" fill="#8fe3b3"><title>' + s.label + ' 수입 ' + fmtWon(s.income) + '</title></rect>';
+    }
+    if (s.expense > 0) {
+      const hgt = (s.expense / maxVal) * barAreaH;
+      bars += '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + midY.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="1.5" fill="#f3a9a3"><title>' + s.label + ' 지출 ' + fmtWon(s.expense) + '</title></rect>';
+    }
+  });
+  const showEvery = Math.max(1, Math.ceil(n / 6));
+  let labels = '';
+  series.forEach((s, i) => {
+    if (i % showEvery !== 0 && i !== n - 1) return;
+    const cx = slot * i + slot / 2;
+    const lab = s.label.length > 7 ? s.label.slice(5).replace('-', '/') : s.label.slice(5) + '월';
+    labels += '<text x="' + cx.toFixed(1) + '" y="' + (h - 3) + '" font-size="8" fill="rgba(255,255,255,.55)" text-anchor="middle">' + lab + '</text>';
+  });
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:112px;display:block;margin-top:10px;">' +
+    '<line x1="0" y1="' + midY + '" x2="' + w + '" y2="' + midY + '" stroke="rgba(255,255,255,.25)" stroke-width="1"></line>' +
+    bars + labels + '</svg>';
+}
 function renderHomeBox(box, d) {
   const netColor = d.netCashflow >= 0 ? '#8fe3b3' : '#f3a9a3';
   let html = '<div class="cardHero"><div class="heroLabel">순현금흐름 (실제 확정된 거래 기준)</div>' +
     '<div class="heroNumber" style="color:' + netColor + ';">' + (d.netCashflow >= 0 ? '+' : '') + fmtWon(d.netCashflow) + '</div>' +
-    '<div class="heroSub">수입 ' + fmtWon(d.totalIncome) + ' · 지출 ' + fmtWon(d.totalExpense) + '</div></div>';
+    '<div class="heroSub">수입 ' + fmtWon(d.totalIncome) + ' · 지출 ' + fmtWon(d.totalExpense) + '</div>' +
+    buildCashFlowChartSvg(d.series) +
+    '</div>';
 
   html += accordionCard('순자산 (자산-부채)', 'home-networth', true,
     '<div style="font-size:20px;font-weight:800;margin-bottom:4px;">' + fmtWon(d.netWorth) + '</div>' +
