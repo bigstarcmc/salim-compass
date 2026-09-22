@@ -645,7 +645,7 @@ function loadCalendar() {
     ')으로만 찍히고, <b>날짜를 누르면</b> 내용이 나와요.<br>' +
     '<span class="dotImp high" style="position:static;display:inline-block;vertical-align:middle;margin-right:4px;"></span>꼭 챙길 일 · ' +
     '<span class="dotImp mid" style="position:static;display:inline-block;vertical-align:middle;margin:0 4px 0 8px;"></span>가볍게 볼 일</div>' +
-    '<div style="text-align:right;margin-top:10px;"><button class="btn-sm btn-ghost" onclick="showTideInfo()">🌊 물때표</button></div></div>';
+    '<div style="text-align:right;margin-top:10px;"><button class="btn-sm btn-ghost" onclick="window.open(\'https://well.poscounion.kr/\',\'_blank\')">🏖️ 노조휴양소</button> <button class="btn-sm btn-ghost" onclick="showTideInfo()">🌊 물때표</button></div></div>';
   fetchCalendar();
 }
 // 광양(원료 하역 작업) 물때 — 눌렀을 때 바로 그 사이트로 이동(오늘 날짜로).
@@ -1027,23 +1027,32 @@ async function loadPayroll() {
   const targets = SCOPE === 'shared' ? PROFILES : PROFILES.filter(p => p.ProfileID === SCOPE);
   el.innerHTML = '<div id="payrollContent" class="muted" style="padding:20px 0;">불러오는 중...</div>';
   const box = document.getElementById('payrollContent');
+  // 공동(여러 명 한번에)일 땐 카드를 기본으로 접어서 화면을 짧게, 한 사람만 볼 땐 펼쳐서 보여줌.
+  const defaultExpanded = targets.length <= 1;
 
   // 캐시-먼저: 모든 대상 프로필의 급여 데이터가 캐시에 있으면 즉시 그리고, 백그라운드로 최신값을 받아온다.
   const cachedHtmls = targets.map(p => {
     const cached = peekApiCache('getPayrollPageData', [p.ProfileID, todayYm()]);
-    return cached ? renderPayrollCardHtml(p, cached) : null;
+    return cached ? renderPayrollCardHtml(p, cached, defaultExpanded) : null;
   });
   if (cachedHtmls.every(h => h !== null)) box.innerHTML = cachedHtmls.join('');
 
-  const htmls = await Promise.all(targets.map(p => renderPayrollCard(p)));
+  const htmls = await Promise.all(targets.map(p => renderPayrollCard(p, defaultExpanded)));
   box.innerHTML = htmls.join('');
 }
-async function renderPayrollCard(profile) {
+async function renderPayrollCard(profile, defaultExpanded) {
   const res = await api('getPayrollPageData', [profile.ProfileID, todayYm()]);
   if (!res.success) return '<div class="card">오류: ' + res.message + '</div>';
-  return renderPayrollCardHtml(profile, res.data);
+  return renderPayrollCardHtml(profile, res.data, defaultExpanded);
 }
-function renderPayrollCardHtml(profile, d) {
+function toggleCardBody(oid) {
+  const box = document.getElementById('cardBody-' + oid);
+  const arrow = document.getElementById('cardBody-' + oid + '-arrow');
+  const open = box.style.display !== 'none';
+  box.style.display = open ? 'none' : '';
+  if (arrow) arrow.innerText = open ? '▸' : '▾';
+}
+function renderPayrollCardHtml(profile, d, defaultExpanded) {
   const oid = profile.ProfileID;
   if (d.needsInit) return '<div class="card"><div class="cardTitle">' + profile.Name + '</div>' +
     '<div class="emptyState" style="margin-bottom:10px;">아직 급여 설정이 없어요. 아래에서 시작해주세요.</div>' +
@@ -1052,6 +1061,7 @@ function renderPayrollCardHtml(profile, d) {
     '<div class="field" id="initFixedRow-' + oid + '" style="display:none;"><label>매달 고정 금액(원)</label><input id="initFixedAmount-' + oid + '" type="number"></div>' +
     '<button class="btn btn-gold" onclick="initPayrollM(\'' + oid + '\')">시작하기</button></div>';
   const est = d.estimate;
+  const bodyId = 'cardBody-' + oid;
   const detailId = 'payDetail-' + oid;
   const itemsId = 'payItems-' + oid;
   const configId = 'payConfig-' + oid;
@@ -1073,9 +1083,20 @@ function renderPayrollCardHtml(profile, d) {
       (it.desc ? '<div id="' + rowId + '" class="muted" style="display:none;font-size:12px;margin-top:4px;line-height:1.5;">' + it.desc + '</div>' : '') +
       '</div>';
   };
+  const confirmBlock = (payType, confirmedRow, estimatedAmt, label) => {
+    const isConfirmed = !!confirmedRow;
+    return '<div class="muted" style="margin-bottom:4px;">' + label + (isConfirmed ? ' — ✅ 확정됨: ' + fmtWon(confirmedRow.ConfirmedAmount) : ' — 아직 확정 안 함') + '</div>' +
+      '<div class="field"><input id="payConfirmAmount-' + payType + '-' + oid + '" type="number" placeholder="' + Math.round(estimatedAmt) + '"' + (isConfirmed ? ' value="' + Math.round(confirmedRow.ConfirmedAmount) + '"' : '') + '></div>' +
+      '<button class="' + (payType === 'regular' ? 'btn btn-gold' : 'btn btn-ghost') + '" onclick="submitPayrollConfirm(\'' + oid + '\',\'' + payType + '\')">' + (isConfirmed ? '다시 확정하기' : label + ' 확정 입력') + '</button>' +
+      (isConfirmed ? ' <button class="btn-sm btn-ghost" onclick="cancelPayrollConfirmM(\'' + oid + '\',\'' + payType + '\')">확정 취소</button>' : '');
+  };
   return '<div class="card">' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="togglePayDetail(\'' + detailId + '\')">' +
-    '<div><div class="cardTitle" style="margin-bottom:2px;">' + profile.Name + '</div><div style="font-size:22px;font-weight:800;">' + fmtWon(est.estimated) + '</div><div class="muted">실수령 추정 (급여 ' + fmtWon(regularEstimated) + ' + 상여 ' + fmtWon(bonusEstimated) + ')</div></div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleCardBody(\'' + oid + '\')">' +
+    '<div><div class="cardTitle" style="margin-bottom:2px;">' + profile.Name + '</div><div style="font-size:22px;font-weight:800;">' + fmtWon(est.estimated) + '</div><div class="muted">실수령 추정 (급여 ' + fmtWon(regularEstimated) + ' + 상여 ' + fmtWon(bonusEstimated) + ')' + (confirmedRegular || confirmedBonus ? ' · ✅ 확정 진행중' : '') + '</div></div>' +
+    '<span id="cardBody-' + oid + '-arrow" style="font-size:16px;color:var(--ink-mute);">' + (defaultExpanded ? '▾' : '▸') + '</span></div>' +
+    '<div id="' + bodyId + '" style="display:' + (defaultExpanded ? '' : 'none') + ';">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;margin-top:12px;" onclick="togglePayDetail(\'' + detailId + '\')">' +
+    '<span class="cardTitle" style="margin:0;">항목보기</span>' +
     '<span id="' + detailId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 항목보기</span></div>' +
     '<div id="' + detailId + '" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">' +
     '<div class="muted" style="margin-bottom:6px;">' + est.periodStart + ' ~ ' + est.periodEnd + ' → ' + est.payMonth + ' 지급 · <span style="text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();jumpTo(\'settings\',\'payguide\')">항목 설명 보기</span></div>' +
@@ -1093,13 +1114,15 @@ function renderPayrollCardHtml(profile, d) {
     '<span id="' + configId + '-arrow" style="font-size:14px;color:var(--ink-mute);">▸ 펼치기</span></div>' +
     '<div id="' + configId + '" style="display:none;margin-top:10px;">' + renderPayConfigBoxHtml(oid, est.config, d.accounts || []) + '</div>' +
     '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border);">' +
-    '<div class="muted" style="margin-bottom:4px;">급여(20일) — ' + (confirmedRegular ? '이미 확정됨: ' + fmtWon(confirmedRegular.ConfirmedAmount) : '아직 확정 안 함') + '</div>' +
-    '<div class="field"><input id="payConfirmAmount-regular-' + oid + '" type="number" placeholder="' + regularEstimated + '"></div>' +
-    '<button class="btn btn-gold" onclick="submitPayrollConfirm(\'' + oid + '\',\'regular\')">급여 확정 입력</button>' +
-    '<div class="muted" style="margin:14px 0 4px;">상여·경영성과금(25일) — ' + (confirmedBonus ? '이미 확정됨: ' + fmtWon(confirmedBonus.ConfirmedAmount) : '아직 확정 안 함') + '</div>' +
-    '<div class="field"><input id="payConfirmAmount-bonus-' + oid + '" type="number" placeholder="' + bonusEstimated + '"></div>' +
-    '<button class="btn btn-ghost" onclick="submitPayrollConfirm(\'' + oid + '\',\'bonus\')">상여 확정 입력</button>' +
-    '</div></div>';
+    confirmBlock('regular', confirmedRegular, regularEstimated, '급여(20일)') +
+    '<div style="margin-top:14px;">' + confirmBlock('bonus', confirmedBonus, bonusEstimated, '상여·경영성과금(25일)') + '</div>' +
+    '</div></div></div>';
+}
+async function cancelPayrollConfirmM(oid, payType) {
+  if (!confirm((payType === 'bonus' ? '상여' : '급여') + ' 확정을 취소할까요? 연결된 거래도 같이 삭제돼요.')) return;
+  const res = await api('cancelConfirmedSalary', [oid, todayYm(), payType]);
+  if (!res.success) { alert(res.message); return; }
+  loadPayroll();
 }
 function togglePayLineDesc(id) {
   const el = document.getElementById(id);
@@ -2329,10 +2352,22 @@ function renderSettingsRecurringHtml(d) {
   const scopedAccounts = d.accounts.filter(a => isOwnedBy(a, SCOPE === 'shared' ? null : SCOPE));
   const accOpts = scopedAccounts.map(a => '<option value="' + a.AccountID + '">' + a.Name + '</option>').join('');
   const catOpts = d.categories.map(c => '<option value="' + c.CategoryID + '">' + c.GroupName + ' · ' + c.Name + '</option>').join('');
+  const ruleRow = r => {
+    const status = r.Applied
+      ? '<span style="color:var(--success);">✅ 반영됨</span>'
+      : (r.DueReached ? '<span style="color:var(--danger);">⬜ 지급일 지남 · 곧 자동 반영</span>' : '<span class="muted">⬜ 아직(' + r.DayOfMonth + '일 예정)</span>');
+    const actionBtn = r.Applied
+      ? '<span class="iconBtn" onclick="unapplyRecurringM(\'' + r.RuleID + '\')" title="반영 취소">↩️</span>'
+      : '<span class="iconBtn" onclick="applyOneRecurringM(\'' + r.RuleID + '\')" title="지금 반영">▶️</span>';
+    return '<div class="listRow" id="recrow-' + r.RuleID + '">' +
+      '<div class="listMain"><span>' + r.Name + ' <span class="muted">(' + r.OwnerName + ', 매달 ' + r.DayOfMonth + '일)</span></span><span class="amt">' + fmtWon(r.Amount) + '</span></div>' +
+      '<div class="listSub"><span style="font-size:12px;">' + status + '</span><span class="iconActions">' + actionBtn +
+      '<span class="iconBtn danger" style="color:var(--danger);" onclick="delRecurring(\'' + r.RuleID + '\')" title="삭제">🗑️</span></span></div></div>';
+  };
   box.innerHTML = '<div class="card"><div class="cardTitle">고정지출 목록' + (SCOPE !== 'shared' ? ' · ' + profileName(SCOPE) : '') + '</div>' +
-    (scopedRules.map(r => '<div class="rowLine"><span>' + r.Name + ' <span class="muted">(' + r.OwnerName + ', 매달 ' + r.DayOfMonth + '일)</span></span><span class="amt">' + fmtWon(r.Amount) + ' <span class="iconBtn danger" style="color:var(--danger);" onclick="delRecurring(\'' + r.RuleID + '\')" title="삭제">🗑️</span></span></div>').join('') ||
+    '<div class="muted" style="margin-bottom:8px;line-height:1.5;">지급일이 지나면 매일 아침 자동으로 반영돼요. ▶️로 미리 반영하거나, ↩️로 반영을 취소할 수 있어요.</div>' +
+    (scopedRules.map(ruleRow).join('') ||
       '<div class="emptyState">' + (SCOPE === 'shared' ? '등록된 고정지출 없음' : profileName(SCOPE) + ' 명의의 고정지출이 없어요.') + '</div>') +
-    '<button class="btn btn-ghost" style="margin-top:10px;" onclick="applyRecurringM()">이번 달 거래로 반영</button>' +
     '</div><div class="card"><div class="cardTitle">고정지출 추가</div>' +
     '<div class="field"><label>이름</label><input id="recName"></div>' +
     '<div class="field"><label>소유자</label><select id="recOwner">' + d.profiles.map(p => '<option value="' + p.ProfileID + '"' + (p.ProfileID === SCOPE ? ' selected' : '') + '>' + p.Name + '</option>').join('') + '<option value="shared"' + (SCOPE === 'shared' ? ' selected' : '') + '>공동</option></select></div>' +
@@ -2353,13 +2388,16 @@ async function delRecurring(id) {
   if (!res.success) { alert(res.message); return; }
   renderSettingsRecurring();
 }
-async function applyRecurringM() {
-  if (!confirm('등록된 고정지출을 전부 이번 달 거래로 반영할까요? (이미 반영된 항목은 자동으로 건너뜁니다)')) return;
-  const res = await api('applyRecurringForMonth', [todayYm()]);
-  if (!res.success) { alert('실패: ' + res.message); return; }
-  var msg = res.data.created.length + '건 새로 반영됨';
-  if (res.data.skipped.length) msg += ' / ' + res.data.skipped.length + '건은 이미 반영되어 건너뜀';
-  alert(msg);
+async function applyOneRecurringM(ruleId) {
+  const res = await api('applySingleRecurring', [ruleId, todayYm()]);
+  if (!res.success) { alert(res.message); return; }
+  renderSettingsRecurring();
+}
+async function unapplyRecurringM(ruleId) {
+  if (!confirm('반영을 취소할까요? 연결된 거래가 삭제되고 계좌 잔액도 되돌아가요.')) return;
+  const res = await api('cancelRecurringApplication', [ruleId, todayYm()]);
+  if (!res.success) { alert(res.message); return; }
+  renderSettingsRecurring();
 }
 
 function renderSettingsTeam() {
