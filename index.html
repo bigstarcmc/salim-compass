@@ -63,6 +63,16 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .cardHero{background:var(--ink); color:#fff; border-radius:var(--radius-lg); padding:22px 20px; margin-bottom:14px;
   position:relative; overflow:hidden;}
 .cardHero::after{content:"🧭"; position:absolute; right:-10px; bottom:-18px; font-size:110px; opacity:.08;}
+/* 홈 화면 통계 타일 — 순자산/사용가능액/예상급여처럼 "숫자 하나가 핵심"인 정보를 아코디언
+ * 리스트 줄로 묻어두지 않고, 바로 탭 가능한 카드로 나란히 보여줘서 한눈에 들어오게 함. */
+.statGrid{display:grid; gap:10px; margin-bottom:14px;}
+.statTile{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px; cursor:pointer;
+  transition:transform .1s ease;}
+.statTile:active{transform:scale(.97);}
+.statTile .statIcon{font-size:17px; margin-bottom:4px;}
+.statTile .statLabel{font-size:11px; color:var(--ink-soft); font-weight:600; margin-bottom:3px;}
+.statTile .statNum{font-size:19px; font-weight:800; color:var(--ink); line-height:1.2;}
+.statTile .statSub{font-size:11px; color:var(--ink-mute); margin-top:3px;}
 .cardTitle{font-size:13px; font-weight:700; color:var(--ink-soft); margin-bottom:10px;}
 .heroLabel{font-size:12px; opacity:.75; margin-bottom:6px;}
 .heroNumber{font-size:32px; font-weight:800; letter-spacing:-.5px; font-variant-numeric:tabular-nums;}
@@ -474,7 +484,32 @@ function buildCashFlowChartSvg(series) {
     '<line x1="0" y1="' + midY + '" x2="' + w + '" y2="' + midY + '" stroke="rgba(255,255,255,.25)" stroke-width="1"></line>' +
     bars + labels + '</svg>';
 }
+// 홈 화면 전용: accordionCard를 그대로 쓰되 카드 왼쪽에 색 강조 테두리를 살짝 얹어서
+// 섹션마다 시각적으로 구분되게 한다(공용 accordionCard 자체는 다른 화면에서도 쓰여서 안 건드림).
+function homeSection(icon, accent, title, id, expanded, bodyHtml, jumpView, jumpSub) {
+  return accordionCard(icon + ' ' + title, id, expanded, bodyHtml, jumpView, jumpSub)
+    .replace('<div class="card">', '<div class="card" style="border-left:3px solid ' + accent + ';">');
+}
+let HOME_DATA = null;
+function showNetWorthDetail() {
+  const d = HOME_DATA; if (!d) return;
+  openSheet('🏦 순자산 (자산-부채)',
+    '<div style="font-size:20px;font-weight:800;margin-bottom:4px;">' + fmtWon(d.netWorth) + '</div>' +
+    '<div class="muted" style="margin-bottom:8px;">자산 ' + fmtWon(d.totalAssets) + (d.totalLiabilities ? ' - 부채 ' + fmtWon(d.totalLiabilities) : '') + '</div>' +
+    d.assetList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt">' + fmtWon(a.amount) + '</span></div>').join('') +
+    (d.liabilityList.length ? '<div class="muted" style="margin:6px 0 2px;">부채</div>' + d.liabilityList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt" style="color:var(--danger);">-' + fmtWon(a.amount) + '</span></div>').join('') : ''));
+}
+function showUsableDetail() {
+  const d = HOME_DATA; if (!d || !d.usable) return;
+  openSheet('💳 이번 달 사용가능액',
+    '<div style="font-size:20px;font-weight:800;">' + fmtWon(d.usable.usable) + '</div>' +
+    '<div class="muted" style="margin-bottom:8px;">하루 약 ' + fmtWon(d.usable.dailyUsable) + ' (남은 ' + d.usable.daysLeft + '일)</div>' +
+    '<div class="rowLine"><span>예상수입</span><span class="amt">' + fmtWon(d.usable.predictedIncome) + '</span></div>' +
+    '<div class="rowLine"><span>이미 쓴 지출</span><span class="amt">-' + fmtWon(d.usable.spentSoFar) + '</span></div>' +
+    '<div class="rowLine"><span>남은 고정지출</span><span class="amt">-' + fmtWon(d.usable.remainingRecurring) + '</span></div>');
+}
 function renderHomeBox(box, d) {
+  HOME_DATA = d;
   const netColor = d.netCashflow >= 0 ? '#8fe3b3' : '#f3a9a3';
   let html = '<div class="cardHero"><div class="heroLabel">순현금흐름 (실제 확정된 거래 기준)</div>' +
     '<div class="heroNumber" style="color:' + netColor + ';">' + (d.netCashflow >= 0 ? '+' : '') + fmtWon(d.netCashflow) + '</div>' +
@@ -482,27 +517,46 @@ function renderHomeBox(box, d) {
     buildCashFlowChartSvg(d.series) +
     '</div>';
 
-  html += accordionCard('순자산 (자산-부채)', 'home-networth', true,
-    '<div style="font-size:20px;font-weight:800;margin-bottom:4px;">' + fmtWon(d.netWorth) + '</div>' +
-    '<div class="muted" style="margin-bottom:8px;">자산 ' + fmtWon(d.totalAssets) + (d.totalLiabilities ? ' - 부채 ' + fmtWon(d.totalLiabilities) : '') + '</div>' +
-    d.assetList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt">' + fmtWon(a.amount) + '</span></div>').join('') +
-    (d.liabilityList.length ? '<div class="muted" style="margin:6px 0 2px;">부채</div>' + d.liabilityList.map(a => '<div class="rowLine"><span>' + a.name + '</span><span class="amt" style="color:var(--danger);">-' + fmtWon(a.amount) + '</span></div>').join('') : ''),
-    null);
+  // 순자산 · 사용가능액 — 제일 자주 확인하는 두 숫자라 아코디언 목록에 묻지 않고
+  // 바로 탭 가능한 타일로 나란히. 자세히 보고 싶으면 눌러서 바텀시트로.
+  html += '<div class="statGrid" style="grid-template-columns:1fr 1fr;">' +
+    '<div class="statTile" onclick="showNetWorthDetail()"><div class="statIcon">🏦</div><div class="statLabel">순자산</div>' +
+    '<div class="statNum">' + fmtWon(d.netWorth) + '</div><div class="statSub">자산 ' + fmtWon(d.totalAssets) + '</div></div>' +
+    '<div class="statTile" onclick="showUsableDetail()"><div class="statIcon">💳</div><div class="statLabel">오늘 쓸 수 있는 돈</div>' +
+    '<div class="statNum">' + (d.usable ? fmtWon(d.usable.dailyUsable) : '-') + '</div><div class="statSub">' + (d.usable ? '남은 ' + d.usable.daysLeft + '일' : '') + '</div></div>' +
+    '</div>';
 
-  if (d.usable) {
-    html += accordionCard('이번 달 사용가능액', 'home-usable', true,
-      '<div style="font-size:20px;font-weight:800;">' + fmtWon(d.usable.usable) + '</div>' +
-      '<div class="muted" style="margin-bottom:8px;">하루 약 ' + fmtWon(d.usable.dailyUsable) + ' (남은 ' + d.usable.daysLeft + '일)</div>' +
-      '<div class="rowLine"><span>예상수입</span><span class="amt">' + fmtWon(d.usable.predictedIncome) + '</span></div>' +
-      '<div class="rowLine"><span>이미 쓴 지출</span><span class="amt">-' + fmtWon(d.usable.spentSoFar) + '</span></div>' +
-      '<div class="rowLine"><span>남은 고정지출</span><span class="amt">-' + fmtWon(d.usable.remainingRecurring) + '</span></div>',
-      null);
+  // 지출목표 — 제일 눈에 잘 띄어야 하는 색+막대 정보라 위쪽으로. 카테고리 이모지로 한눈에.
+  html += homeSection('🎯', 'var(--gold)', '지출목표', 'home-budget', true,
+    (d.budgets.map(b => {
+      const pct = Math.min(100, Math.round(b.Pct * 100));
+      const color = b.Status === 'danger' ? 'var(--danger)' : (b.Status === 'warn' ? '#c98a16' : 'var(--success)');
+      const icon = categoryEmoji({ TxnType: '지출', CategoryName: b.Label });
+      return '<div style="margin-bottom:10px;"><div class="rowLine"><span>' + icon + ' ' + b.Label + '</span><span>' + pct + '%</span></div>' +
+        '<div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:' + color + ';"></div></div>' +
+        '<div class="muted">' + fmtWon(b.Spent) + ' / ' + fmtWon(b.MonthlyLimit) + '</div></div>';
+    }).join('') || '<div class="emptyState">등록된 지출목표 없음</div>'),
+    'ledger', 'budget');
+
+  // 예상 급여 — 사람별로 나란히 비교되게 타일로.
+  if (d.predictedPayroll.length) {
+    html += '<div class="statGrid" style="grid-template-columns:repeat(' + d.predictedPayroll.length + ',1fr);">' +
+      d.predictedPayroll.map(p => '<div class="statTile" onclick="jumpTo(\'payroll\')"><div class="statIcon">💰</div><div class="statLabel">' + p.name + ' 예상 급여</div><div class="statNum">' + fmtWon(p.amount) + '</div></div>').join('') +
+      '</div>';
   }
+
+  // 최근 거래 — 가계부 화면과 똑같이 카테고리 이모지를 붙여서 훑어보기 쉽게.
+  html += homeSection('📜', '#6B7280', '최근 거래 Top 5', 'home-txn', true,
+    (d.topExpenses.map(e => {
+      const icon = categoryEmoji({ TxnType: '지출', CategoryName: e.category });
+      return '<div class="rowLine"><span>' + icon + ' ' + e.date + (e.source ? ' · ' + e.source : '') + (e.category ? ' · ' + e.category : '') + '</span><span class="amt" style="color:var(--danger);">-' + fmtWon(e.amount) + '</span></div>';
+    }).join('') || '<div class="emptyState">지출 기록 없음</div>'),
+    'ledger', 'exp');
 
   if (d.cashflow) {
     // "총지출"과 "통장에서 실제로 빠진 돈"은 다른 값이다. 카드를 쓰면 지출은 바로 잡히지만
     // 통장은 결제일에야 줄기 때문에, 이 둘을 한 숫자로 합쳐 보여주면 반드시 헷갈린다.
-    html += accordionCard('지출 구성 (카드 포함)', 'home-cashflow', true,
+    html += homeSection('💳', '#0EA5E9', '지출 구성 (카드 포함)', 'home-cashflow', false,
       '<div class="rowLine"><span>총 지출 <span class="muted">(카드 사용 포함)</span></span><span class="amt">' + fmtWon(d.cashflow.totalExpense) + '</span></div>' +
       '<div class="rowLine"><span>└ 현금 유출 <span class="muted">(통장에서 실제로 나감)</span></span><span class="amt">' + fmtWon(d.cashflow.cashOutflow) + '</span></div>' +
       '<div class="rowLine"><span>└ 카드 사용액 <span class="muted">(아직 안 나감)</span></span><span class="amt">' + fmtWon(d.cashflow.cardUsage) + '</span></div>' +
@@ -511,31 +565,12 @@ function renderHomeBox(box, d) {
       'ledger', 'card');
   }
 
-  html += accordionCard('예상 급여', 'home-payroll', true,
-    d.predictedPayroll.map(p => '<div class="rowLine"><span>' + p.name + '</span><span class="amt">' + fmtWon(p.amount) + '</span></div>').join('') +
-    '<div class="rowLine" style="font-weight:800;"><span>합계(예상)</span><span class="amt">' + fmtWon(d.predictedPayrollTotal) + '</span></div>',
-    'payroll');
-
-  html += accordionCard('지출목표', 'home-budget', true,
-    (d.budgets.map(b => {
-      const pct = Math.min(100, Math.round(b.Pct * 100));
-      const color = b.Status === 'danger' ? 'var(--danger)' : (b.Status === 'warn' ? '#c98a16' : 'var(--success)');
-      return '<div style="margin-bottom:10px;"><div class="rowLine"><span>' + b.Label + '</span><span>' + pct + '%</span></div>' +
-        '<div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:' + color + ';"></div></div>' +
-        '<div class="muted">' + fmtWon(b.Spent) + ' / ' + fmtWon(b.MonthlyLimit) + '</div></div>';
-    }).join('') || '<div class="emptyState">등록된 지출목표 없음</div>'),
-    'ledger', 'budget');
-
-  html += accordionCard('통장 내역 (지출/수입) Top 5', 'home-txn', true,
-    (d.topExpenses.map(e => '<div class="rowLine"><span>' + e.date + (e.source ? ' · ' + e.source : '') + '</span><span class="amt" style="color:var(--danger);">-' + fmtWon(e.amount) + '</span></div>').join('') || '<div class="emptyState">지출 기록 없음</div>'),
-    'ledger', 'exp');
-
-  html += accordionCard('저축목표', 'home-goals', true,
+  html += homeSection('🏆', 'var(--success)', '저축목표', 'home-goals', true,
     (d.topGoals.map(g => { const pct = Math.min(100, Math.round(g.progress * 100)); return '<div style="margin-bottom:10px;"><div class="rowLine"><span>' + g.name + '</span><span>' + pct + '%</span></div><div class="barTrack"><div class="barFill" style="width:' + pct + '%;background:var(--gold);"></div></div></div>'; }).join('') || '<div class="emptyState">등록된 목표 없음</div>'),
     'savings');
 
   // 가족 셋(진한/선영/어머니)이 같이 쓰는 앱이라 — 서로 기능 요청하거나 하고 싶은 말을 짧게 남기는 곳.
-  html += accordionCard('가족 메시지판', 'home-family', false,
+  html += homeSection('💬', '#A855F7', '가족 메시지판', 'home-family', false,
     '<div class="muted" style="margin-bottom:10px;">요청하고 싶은 기능이나 서로에게 하고 싶은 말을 편하게 남겨보세요.</div>' +
     '<div id="familyNotesBox" class="muted">불러오는 중...</div>' +
     '<div class="field" style="margin-top:10px;"><label>작성자</label><select id="fnAuthor"><option>진한</option><option>선영</option><option>어머니</option></select></div>' +
@@ -544,14 +579,14 @@ function renderHomeBox(box, d) {
     null);
 
   // Gemini 연동 — 매번 "지금 이 순간 가계 요약"만 만들어서 건넨다(시트 전체를 그대로 보내지 않음).
-  html += accordionCard('가족 AI 비서', 'home-ai', false,
+  html += homeSection('🤖', '#F59E0B', '가족 AI 비서', 'home-ai', false,
     '<div class="muted" style="margin-bottom:10px;">지금 잔액·이번 달 지출·예산·급여예측·저축목표를 바탕으로 답해줘요. (설정 → AI 비서에서 키 등록 필요)</div>' +
     '<div class="field"><input id="aiQuestion" placeholder="예: 이번 달 지출목표 잘 지키고 있어?"></div>' +
     '<button class="btn btn-gold" onclick="submitAiAsk()">물어보기</button>' +
     '<div id="aiAnswerBox" style="margin-top:10px;"></div>',
     'settings', 'ai');
 
-  html += '<div class="card"><div class="cardTitle">월말 마감</div>' +
+  html += '<div class="card"><div class="cardTitle">📅 월말 마감</div>' +
     '<button class="btn btn-ghost" onclick="closeThisMonthM()">이번 달 마감하기</button>' +
     '<div id="snapshotTrendM" style="margin-top:10px;"></div></div>';
 
