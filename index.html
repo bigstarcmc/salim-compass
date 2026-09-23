@@ -73,6 +73,11 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .statTile .statLabel{font-size:11px; color:var(--ink-soft); font-weight:600; margin-bottom:3px;}
 .statTile .statNum{font-size:19px; font-weight:800; color:var(--ink); line-height:1.2;}
 .statTile .statSub{font-size:11px; color:var(--ink-mute); margin-top:3px;}
+/* 홈 히어로 카드 안 그래프 단위 전환(일/주/월/년) — 증권앱 차트 탭처럼. */
+.chartGranTabs{display:flex; gap:4px; margin-top:10px;}
+.chartGranBtn{flex:1; text-align:center; padding:4px 0; border-radius:8px; font-size:11px; font-weight:700;
+  color:rgba(255,255,255,.55); cursor:pointer;}
+.chartGranBtn.active{background:rgba(255,255,255,.16); color:#fff;}
 .cardTitle{font-size:13px; font-weight:700; color:var(--ink-soft); margin-bottom:10px;}
 .heroLabel{font-size:12px; opacity:.75; margin-bottom:6px;}
 .heroNumber{font-size:32px; font-weight:800; letter-spacing:-.5px; font-variant-numeric:tabular-nums;}
@@ -94,7 +99,8 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 /* 거래/이체 목록: 글자가 길어져도 절대 다음 줄로 안 넘어가고 한 줄 안에서 말줄임표(...)로
  * 잘리게 한다. 아이콘·날짜는 맨 왼쪽에 작게 고정, 금액·수정아이콘은 맨 오른쪽에 고정폭으로
  * 고정해서 글자 길이와 무관하게 항상 같은 자리에 있다. */
-.txnRowLine{display:flex; align-items:center; gap:6px; padding:10px 0; border-bottom:1px solid #F4EFE3; font-size:13px; cursor:pointer;}
+.txnRowLine{display:flex; align-items:center; gap:6px; padding:10px 0; border-bottom:1px solid #F4EFE3; font-size:13px; cursor:pointer;
+  touch-action:pan-y; transition:transform .15s ease;}
 .txnRowLine:last-child{border-bottom:none;}
 .txnRowLine .txnIcon{flex:0 0 auto; font-size:14px; width:18px; text-align:center;}
 .txnRowLine .txnDate{flex:0 0 auto; font-size:10px; color:var(--ink-mute); width:32px; line-height:1.3;}
@@ -448,18 +454,17 @@ async function fetchHome() {
   // 데워두면, 실제로 저축 탭을 눌렀을 때 대부분 캐시 히트로 바로 뜬다.
   api('listSavingsGoals');
 }
-// 홈 화면 맨 위 "한눈에 보는" 막대그래프. 일별(이번달/지난달)이면 수입은 위로,
-// 지출은 아래로 — 증권 앱의 캔들/거래량 차트처럼 기준선(0) 위아래로 갈라서 보여준다.
-// 월별(최근3개월/올해)로 전환되면 같은 함수가 자동으로 달 단위 막대를 그린다(백엔드가
-// 기간 길이를 보고 이미 일/월 단위를 정해서 series를 넘겨주기 때문에 여기선 그대로 그리기만 함).
+// 홈 화면 맨 위 "한눈에 보는" 막대그래프. 위쪽(0 기준선)은 수입, 아래쪽은 지출 —
+// 증권 앱의 거래량 차트처럼. 일/주/월/년 단위 전환은 상단 기간 탭(이번달/지난달/...)과
+// 완전히 별개로 동작한다(전용 API getCashFlowSeries) — 그래프만 빠르게 훑어볼 수 있게.
 function buildCashFlowChartSvg(series) {
-  if (!series || !series.length) return '';
-  const w = 328, h = 128, midY = h / 2;
+  if (!series || !series.length) return '<div class="muted" style="text-align:center;padding:20px 0;font-size:12px;">표시할 거래 없음</div>';
+  const w = 328, h = 88, midY = h / 2;
   const maxVal = Math.max(1, ...series.map(s => Math.max(s.income, s.expense)));
-  const barAreaH = h / 2 - 16;
+  const barAreaH = h / 2 - 12;
   const n = series.length;
   const slot = w / n;
-  const barW = Math.max(2, Math.min(16, slot * 0.62));
+  const barW = Math.max(1.5, Math.min(14, slot * 0.62));
   let bars = '';
   series.forEach((s, i) => {
     const cx = slot * i + slot / 2;
@@ -472,17 +477,39 @@ function buildCashFlowChartSvg(series) {
       bars += '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + midY.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="1.5" fill="#f3a9a3"><title>' + s.label + ' 지출 ' + fmtWon(s.expense) + '</title></rect>';
     }
   });
-  const showEvery = Math.max(1, Math.ceil(n / 6));
+  const showEvery = Math.max(1, Math.ceil(n / 5));
   let labels = '';
   series.forEach((s, i) => {
     if (i % showEvery !== 0 && i !== n - 1) return;
     const cx = slot * i + slot / 2;
-    const lab = s.label.length > 7 ? s.label.slice(5).replace('-', '/') : s.label.slice(5) + '월';
-    labels += '<text x="' + cx.toFixed(1) + '" y="' + (h - 3) + '" font-size="8" fill="rgba(255,255,255,.55)" text-anchor="middle">' + lab + '</text>';
+    let lab;
+    if (s.label.length === 10) lab = s.label.slice(5).replace('-', '/');
+    else if (s.label.length === 7) lab = s.label.slice(5) + '월';
+    else lab = s.label + '년';
+    labels += '<text x="' + cx.toFixed(1) + '" y="' + (h - 2) + '" font-size="8" fill="rgba(255,255,255,.5)" text-anchor="middle">' + lab + '</text>';
   });
-  return '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:112px;display:block;margin-top:10px;">' +
-    '<line x1="0" y1="' + midY + '" x2="' + w + '" y2="' + midY + '" stroke="rgba(255,255,255,.25)" stroke-width="1"></line>' +
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:80px;display:block;">' +
+    '<line x1="0" y1="' + midY + '" x2="' + w + '" y2="' + midY + '" stroke="rgba(255,255,255,.2)" stroke-width="1"></line>' +
     bars + labels + '</svg>';
+}
+let chartGranularity = 'day';
+async function loadCashFlowChart() {
+  const args = [chartGranularity, SCOPE];
+  const cached = peekApiCache('getCashFlowSeries', args);
+  if (cached) renderCashFlowChartBox(cached.series);
+  const res = await api('getCashFlowSeries', args);
+  if (res.success) renderCashFlowChartBox(res.data.series);
+}
+function renderCashFlowChartBox(series) {
+  const el = document.getElementById('cashFlowChartBox');
+  if (el) el.innerHTML = buildCashFlowChartSvg(series);
+}
+function setChartGranularity(g) {
+  chartGranularity = g;
+  document.querySelectorAll('.chartGranBtn').forEach(b => b.classList.toggle('active', b.dataset.g === g));
+  const el = document.getElementById('cashFlowChartBox');
+  if (el) el.innerHTML = '<div class="muted" style="text-align:center;padding:20px 0;font-size:12px;">불러오는 중...</div>';
+  loadCashFlowChart();
 }
 // 홈 화면 전용: accordionCard를 그대로 쓰되 카드 왼쪽에 색 강조 테두리를 살짝 얹어서
 // 섹션마다 시각적으로 구분되게 한다(공용 accordionCard 자체는 다른 화면에서도 쓰여서 안 건드림).
@@ -514,7 +541,11 @@ function renderHomeBox(box, d) {
   let html = '<div class="cardHero"><div class="heroLabel">순현금흐름 (실제 확정된 거래 기준)</div>' +
     '<div class="heroNumber" style="color:' + netColor + ';">' + (d.netCashflow >= 0 ? '+' : '') + fmtWon(d.netCashflow) + '</div>' +
     '<div class="heroSub">수입 ' + fmtWon(d.totalIncome) + ' · 지출 ' + fmtWon(d.totalExpense) + '</div>' +
-    buildCashFlowChartSvg(d.series) +
+    '<div class="chartGranTabs">' + ['day:일', 'week:주', 'month:월', 'year:년'].map(p => {
+      const [k, label] = p.split(':');
+      return '<span class="chartGranBtn' + (k === chartGranularity ? ' active' : '') + '" data-g="' + k + '" onclick="setChartGranularity(\'' + k + '\')">' + label + '</span>';
+    }).join('') + '</div>' +
+    '<div id="cashFlowChartBox"><div class="muted" style="text-align:center;padding:20px 0;font-size:12px;">불러오는 중...</div></div>' +
     '</div>';
 
   // 순자산 · 사용가능액 — 제일 자주 확인하는 두 숫자라 아코디언 목록에 묻지 않고
@@ -591,6 +622,7 @@ function renderHomeBox(box, d) {
     '<div id="snapshotTrendM" style="margin-top:10px;"></div></div>';
 
   box.innerHTML = html;
+  loadCashFlowChart();
   loadSnapshotTrendM();
   loadFamilyNotes();
 }
@@ -1541,7 +1573,8 @@ function txnRowHtml(t) {
   const clickable = t.TxnID && !t._pending;
   const text = (t.AccountName ? payMethodIcon(t.PayMethodLabel) + t.AccountName : '') + (t.CategoryName ? ' · ' + t.CategoryName : '') +
     (t.Source && t.Source !== '수동' ? ' · ' + t.Source : '') + (t.Memo ? ' (' + t.Memo + ')' : '');
-  return '<div class="txnRowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')"' : '') + '>' +
+  return '<div class="txnRowLine"' + (t._pending ? ' style="opacity:.55;"' : '') +
+    (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')" ontouchstart="txnSwipeStart(event)" ontouchmove="txnSwipeMove(event)" ontouchend="txnSwipeEnd(event,\'' + t.TxnID + '\')"' : '') + '>' +
     '<span class="txnIcon">' + categoryEmoji(t) + '</span>' +
     '<span class="txnDate">' + shortDate(t.TxnDate) + '</span>' +
     '<span class="txnText">' + text + '</span>' +
@@ -1552,7 +1585,8 @@ function txnRowHtml(t) {
 function transferRowHtml(t) {
   const clickable = t.TxnID && !t._pending;
   const text = t.FromAccountName + ' → ' + t.ToAccountName + (t.ReferenceType === 'CARD_PAYMENT' ? ' (카드대금)' : '');
-  return '<div class="txnRowLine"' + (t._pending ? ' style="opacity:.55;"' : '') + (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')"' : '') + '>' +
+  return '<div class="txnRowLine"' + (t._pending ? ' style="opacity:.55;"' : '') +
+    (clickable ? ' onclick="openTxnEditor(\'' + t.TxnID + '\')" ontouchstart="txnSwipeStart(event)" ontouchmove="txnSwipeMove(event)" ontouchend="txnSwipeEnd(event,\'' + t.TxnID + '\')"' : '') + '>' +
     '<span class="txnIcon">🔁</span>' +
     '<span class="txnDate">' + shortDate(t.TxnDate) + '</span>' +
     '<span class="txnText">' + text + '</span>' +
@@ -1560,6 +1594,40 @@ function transferRowHtml(t) {
     (t._pending ? '<span class="txnPending muted">저장중</span>' : (clickable ? '<span class="txnEdit">✏️</span>' : '')) +
     '</div>';
 }
+/* 거래 목록 줄을 왼쪽으로 쓸어넘기면(스와이프) 삭제되게. 탭(클릭)으로 수정창 여는 것과
+ * 같은 줄에 공존시켜야 해서, "충분히 옆으로 밀었을 때만" 삭제로 인식하고 그 전까지는
+ * 평범한 탭으로 처리한다(짧게 눌렀다 떼면 openTxnEditor의 onclick이 그대로 작동함). */
+let TXN_SWIPE = null;
+function txnSwipeStart(e) {
+  const t = e.touches[0];
+  TXN_SWIPE = { startX: t.clientX, startY: t.clientY, el: e.currentTarget, moved: false, dx: 0 };
+}
+function txnSwipeMove(e) {
+  if (!TXN_SWIPE) return;
+  const t = e.touches[0];
+  const dx = t.clientX - TXN_SWIPE.startX;
+  const dy = t.clientY - TXN_SWIPE.startY;
+  if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+    TXN_SWIPE.moved = true;
+    TXN_SWIPE.dx = dx;
+    if (dx < 0) {
+      const clamped = Math.max(dx, -90);
+      TXN_SWIPE.el.style.transform = 'translateX(' + clamped + 'px)';
+      TXN_SWIPE.el.style.background = 'linear-gradient(to left, var(--danger) ' + Math.min(90, -clamped) + 'px, transparent ' + Math.min(90, -clamped) + 'px)';
+    }
+  }
+}
+async function txnSwipeEnd(e, txnId) {
+  if (!TXN_SWIPE) return;
+  const s = TXN_SWIPE;
+  TXN_SWIPE = null;
+  if (s.moved) {
+    e.preventDefault(); // 스와이프였으면 뒤이은 click(수정창 열기)이 안 뜨게 막음
+    s.el.style.transform = ''; s.el.style.background = '';
+    if (s.dx < -55) { await deleteTxnM(txnId); }
+  }
+}
+
 function updateLtTxnList(transactions) {
   rememberTxns(transactions);
   const list = document.getElementById('ltTxnList');
