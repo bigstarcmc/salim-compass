@@ -59,8 +59,8 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 @keyframes fadeUp{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
 
 .card{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);
-  padding:16px; margin-bottom:12px;}
-.cardHero{background:var(--ink); color:#fff; border-radius:var(--radius-lg); padding:22px 20px; margin-bottom:14px;
+  padding:16px; margin-bottom:12px; box-shadow:0 1px 3px rgba(27,42,74,.05);}
+.cardHero{background:linear-gradient(155deg, var(--ink) 0%, #14203a 100%); color:#fff; border-radius:var(--radius-lg); padding:22px 20px; margin-bottom:14px;
   position:relative; overflow:hidden;}
 .cardHero::after{content:"🧭"; position:absolute; right:-10px; bottom:-18px; font-size:110px; opacity:.08;}
 /* 홈 화면 통계 타일 — 순자산/사용가능액/예상급여처럼 "숫자 하나가 핵심"인 정보를 아코디언
@@ -454,43 +454,39 @@ async function fetchHome() {
   // 데워두면, 실제로 저축 탭을 눌렀을 때 대부분 캐시 히트로 바로 뜬다.
   api('listSavingsGoals');
 }
-// 홈 화면 맨 위 "한눈에 보는" 막대그래프. 위쪽(0 기준선)은 수입, 아래쪽은 지출 —
-// 증권 앱의 거래량 차트처럼. 일/주/월/년 단위 전환은 상단 기간 탭(이번달/지난달/...)과
-// 완전히 별개로 동작한다(전용 API getCashFlowSeries) — 그래프만 빠르게 훑어볼 수 있게.
+// 홈 화면 맨 위 그래프 — 수입/지출을 색이 뚜렷하게 다른 두 개의 선으로 겹쳐 그린다
+// (증권 앱 주가 그래프 느낌). 막대 대신 선으로 바꾼 이유: 추세가 한눈에 더 잘 들어옴.
 function buildCashFlowChartSvg(series) {
   if (!series || !series.length) return '<div class="muted" style="text-align:center;padding:20px 0;font-size:12px;">표시할 거래 없음</div>';
-  const w = 328, h = 88, midY = h / 2;
+  const w = 328, h = 96, padTop = 6, padBottom = 16;
   const maxVal = Math.max(1, ...series.map(s => Math.max(s.income, s.expense)));
-  const barAreaH = h / 2 - 12;
   const n = series.length;
-  const slot = w / n;
-  const barW = Math.max(1.5, Math.min(14, slot * 0.62));
-  let bars = '';
-  series.forEach((s, i) => {
-    const cx = slot * i + slot / 2;
-    if (s.income > 0) {
-      const hgt = (s.income / maxVal) * barAreaH;
-      bars += '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + (midY - hgt).toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="1.5" fill="#8fe3b3"><title>' + s.label + ' 수입 ' + fmtWon(s.income) + '</title></rect>';
-    }
-    if (s.expense > 0) {
-      const hgt = (s.expense / maxVal) * barAreaH;
-      bars += '<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + midY.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="1.5" fill="#f3a9a3"><title>' + s.label + ' 지출 ' + fmtWon(s.expense) + '</title></rect>';
-    }
-  });
+  const stepX = n > 1 ? w / (n - 1) : w;
+  const scaleY = (h - padTop - padBottom) / maxVal;
+  const toY = v => h - padBottom - v * scaleY;
+  const incomePts = series.map((s, i) => (i * stepX).toFixed(1) + ',' + toY(s.income).toFixed(1)).join(' ');
+  const expensePts = series.map((s, i) => (i * stepX).toFixed(1) + ',' + toY(s.expense).toFixed(1)).join(' ');
+  const totalIncome = series.reduce((s, x) => s + x.income, 0);
+  const totalExpense = series.reduce((s, x) => s + x.expense, 0);
+
   const showEvery = Math.max(1, Math.ceil(n / 5));
   let labels = '';
   series.forEach((s, i) => {
     if (i % showEvery !== 0 && i !== n - 1) return;
-    const cx = slot * i + slot / 2;
     let lab;
     if (s.label.length === 10) lab = s.label.slice(5).replace('-', '/');
     else if (s.label.length === 7) lab = s.label.slice(5) + '월';
     else lab = s.label + '년';
-    labels += '<text x="' + cx.toFixed(1) + '" y="' + (h - 2) + '" font-size="8" fill="rgba(255,255,255,.5)" text-anchor="middle">' + lab + '</text>';
+    labels += '<text x="' + (i * stepX).toFixed(1) + '" y="' + (h - 2) + '" font-size="8" fill="rgba(255,255,255,.5)" text-anchor="middle">' + lab + '</text>';
   });
-  return '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:80px;display:block;">' +
-    '<line x1="0" y1="' + midY + '" x2="' + w + '" y2="' + midY + '" stroke="rgba(255,255,255,.2)" stroke-width="1"></line>' +
-    bars + labels + '</svg>';
+
+  return '<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin:8px 0 2px;">' +
+    '<span style="color:#34D399;">● 수입 ' + fmtWon(totalIncome) + '</span>' +
+    '<span style="color:#F87171;">● 지출 ' + fmtWon(totalExpense) + '</span></div>' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:88px;display:block;">' +
+    '<polyline points="' + incomePts + '" fill="none" stroke="#34D399" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+    '<polyline points="' + expensePts + '" fill="none" stroke="#F87171" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+    labels + '</svg>';
 }
 let chartGranularity = 'day';
 async function loadCashFlowChart() {
@@ -551,9 +547,9 @@ function renderHomeBox(box, d) {
   // 순자산 · 사용가능액 — 제일 자주 확인하는 두 숫자라 아코디언 목록에 묻지 않고
   // 바로 탭 가능한 타일로 나란히. 자세히 보고 싶으면 눌러서 바텀시트로.
   html += '<div class="statGrid" style="grid-template-columns:1fr 1fr;">' +
-    '<div class="statTile" onclick="showNetWorthDetail()"><div class="statIcon">🏦</div><div class="statLabel">순자산</div>' +
+    '<div class="statTile" style="background:linear-gradient(160deg,#EEF3FF 0%,var(--surface) 65%);" onclick="showNetWorthDetail()"><div class="statIcon">🏦</div><div class="statLabel">순자산</div>' +
     '<div class="statNum">' + fmtWon(d.netWorth) + '</div><div class="statSub">자산 ' + fmtWon(d.totalAssets) + '</div></div>' +
-    '<div class="statTile" onclick="showUsableDetail()"><div class="statIcon">💳</div><div class="statLabel">오늘 쓸 수 있는 돈</div>' +
+    '<div class="statTile" style="background:linear-gradient(160deg,var(--gold-soft) 0%,var(--surface) 65%);" onclick="showUsableDetail()"><div class="statIcon">💳</div><div class="statLabel">오늘 쓸 수 있는 돈</div>' +
     '<div class="statNum">' + (d.usable ? fmtWon(d.usable.dailyUsable) : '-') + '</div><div class="statSub">' + (d.usable ? '남은 ' + d.usable.daysLeft + '일' : '') + '</div></div>' +
     '</div>';
 
