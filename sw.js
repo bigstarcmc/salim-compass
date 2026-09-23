@@ -13,7 +13,7 @@
 // stale-while-revalidate: 캐시가 있으면 그걸 즉시 보여주고, 그와 동시에 백그라운드로
 // 최신 버전을 받아서 캐시를 갱신합니다. 즉 "코드를 고쳐도 반영이 영원히 안 되는" 문제는
 // 생기지 않습니다 — 늦어도 그 다음 실행부터는 최신 버전이 보입니다.
-const SHELL_CACHE = 'salim-shell-v3'; // 5차(현금결제·카드종류 구분·캘린더 점) 반영
+const SHELL_CACHE = 'salim-shell-v4'; // 6차(백그라운드 서버 예열) 반영
 const SHELL_URLS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon-180.png'];
 
 self.addEventListener('install', (e) => {
@@ -53,4 +53,26 @@ self.addEventListener('fetch', (e) => {
       })
     )
   );
+});
+
+/**
+ * [서버 예열] 서비스워커는 localStorage에 접근할 수 없어서(다른 실행 맥락), 앱 화면에
+ * 보여줄 데이터를 직접 캐싱해줄 수는 없다. 대신 할 수 있는 건: Apps Script 쪽에 미리
+ * 요청을 한 번 보내서, 거기 5분짜리 서버 캐시(CacheService)가 식지 않게 유지하는 것.
+ * 그러면 사용자가 실제로 앱을 열었을 때 "완전히 식은 서버"가 아니라 "이미 데워진 서버"를
+ * 만나서 첫 로딩이 더 빠르다. 페이지 쪽에서 postMessage로 접속 정보(CFG)를 보내주면
+ * 그걸 기억해뒀다가, periodicsync가 울릴 때 그 정보로 가벼운 조회 요청을 한 번 보낸다.
+ */
+let cfg = null;
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'CFG') cfg = { url: e.data.url, key: e.data.key };
+});
+self.addEventListener('periodicsync', (e) => {
+  if (e.tag !== 'warm-backend' || !cfg) return;
+  const today = new Date();
+  const ym = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+  const start = ym + '-01', end = ym + '-28';
+  const args = encodeURIComponent(JSON.stringify([start, end, 'shared']));
+  const u = cfg.url + '?action=getHomeSummary&key=' + encodeURIComponent(cfg.key) + '&args=' + args;
+  e.waitUntil(fetch(u).catch(() => { /* 실패해도 어차피 다음 기회에 또 시도되니 무시 */ }));
 });
