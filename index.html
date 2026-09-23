@@ -106,7 +106,7 @@ main{padding:16px 16px 24px; max-width:480px; margin:0 auto;}
 .txnRowLine .txnDate{flex:0 0 auto; font-size:10px; color:var(--ink-mute); width:32px; line-height:1.3;}
 .txnRowLine .txnText{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .txnRowLine .txnAmt{flex:0 0 auto; font-weight:700; font-variant-numeric:tabular-nums; margin-left:2px;}
-.txnRowLine .txnEdit{flex:0 0 auto; font-size:11px; opacity:.45; margin-left:1px;}
+.txnRowLine .txnEdit{flex:0 0 auto; font-size:11px; opacity:.45; margin-left:6px; padding:4px 2px;}
 .txnRowLine .txnPending{flex:0 0 auto; font-size:10px; margin-left:1px;}
 
 .pillTabs{display:flex; gap:6px; margin-bottom:14px; overflow-x:auto;}
@@ -1604,7 +1604,8 @@ function txnRowHtml(t) {
     '<span class="txnDate">' + shortDate(t.TxnDate) + '</span>' +
     '<span class="txnText">' + text + '</span>' +
     '<span class="txnAmt" style="color:' + color + ';">' + sign + fmtWon(t.Amount) + '</span>' +
-    (t._pending ? '<span class="txnPending muted">저장중</span>' : (clickable ? '<span class="txnEdit">✏️</span>' : '')) +
+    (t._pending ? '<span class="txnPending muted">저장중</span>' :
+      (clickable ? '<span class="txnEdit">✏️</span><span class="txnEdit" onclick="deleteTxnDirectM(event,\'' + t.TxnID + '\')" title="삭제">🗑️</span>' : '')) +
     '</div>';
 }
 function transferRowHtml(t) {
@@ -1616,7 +1617,8 @@ function transferRowHtml(t) {
     '<span class="txnDate">' + shortDate(t.TxnDate) + '</span>' +
     '<span class="txnText">' + text + '</span>' +
     '<span class="txnAmt">' + fmtWon(t.Amount) + '</span>' +
-    (t._pending ? '<span class="txnPending muted">저장중</span>' : (clickable ? '<span class="txnEdit">✏️</span>' : '')) +
+    (t._pending ? '<span class="txnPending muted">저장중</span>' :
+      (clickable ? '<span class="txnEdit">✏️</span><span class="txnEdit" onclick="deleteTxnDirectM(event,\'' + t.TxnID + '\')" title="삭제">🗑️</span>' : '')) +
     '</div>';
 }
 /* 거래 목록 줄을 왼쪽으로 쓸어넘기면(스와이프) 삭제되게. 탭(클릭)으로 수정창 여는 것과
@@ -1762,6 +1764,15 @@ async function saveTxnEdit(txnId) {
   const res = await api('updateTransaction', [txnId, patch]);
   if (!res.success) { alert('수정 실패: ' + res.message); }
   loadLedger();
+}
+// 목록 줄 자체를 눌러서 여는 수정창 → 그 안의 "삭제" 버튼과는 별개로, 목록에서 바로
+// 보이는 독립된 삭제 아이콘. 혹시라도 줄 클릭(onclick)이 뭔가에 막히는 경우에도(다른
+// 브라우저 확장 아이콘이 겹쳐 있다거나 등) 삭제만큼은 항상 별도 경로로 가능하게 하려고
+// 일부러 수정창을 거치지 않는 독립 버튼으로 뒀다. stopPropagation으로 부모 줄의
+// onclick(수정창 열기)이 같이 실행되지 않게 막는다.
+async function deleteTxnDirectM(e, txnId) {
+  e.stopPropagation();
+  await deleteTxnM(txnId);
 }
 async function deleteTxnM(txnId) {
   if (!confirm('이 거래를 삭제할까요? 계좌 잔액도 되돌아가요.')) return;
